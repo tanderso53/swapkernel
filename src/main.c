@@ -54,7 +54,8 @@ void swapk_sleep_ms(uint32_t ms)
 {
 	sch.current->ready = false;
 	add_alarm_in_ms(ms, alarm_handler, sch.current, true);
-	swapk_maybe_switch_context(&sch);
+	sch.context_shift = true;
+	swapk_preempt(&sch);
 }
 
 int64_t alarm_handler(alarm_id_t id, void *user_data)
@@ -72,14 +73,16 @@ void *proca_entry(void *arg)
 
 	for (;;) {
 		printf("Head of loop\n");
-		swapk_sleep_ms(30000);
+		swapk_sleep_ms(10000);
 	}
 }
 
 void *procb_entry(void *arg)
 {
 	printf("We made it to proc B!\n");
-	swapk_sleep_ms(30000);
+	swapk_sleep_ms(18000);
+
+	printf("Procb is ending!!!!\n");
 
 	return arg;
 }
@@ -91,5 +94,13 @@ void handle_pendsv()
 
 int main()
 {
+	stdio_usb_init();
+
+	while(!stdio_usb_connected()) {
+		tight_loop_contents();
+	}
+
+	printf("You are connected!\n");
+
 	kernel_init();
 }

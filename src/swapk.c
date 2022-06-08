@@ -161,6 +161,18 @@ swapk_proc_t *swapk_push_proc(swapk_scheduler_t *sch,
 		return proc;
 	}
 
+	/* Make sure we aren't already in the list */
+	while (nextelem) {
+		if (nextelem == proc)
+			return proc;
+
+		elem = nextelem;
+		nextelem = elem->next;
+	}
+
+	elem = NULL;
+	nextelem = sch->procqueue;
+
 	while (nextelem) {
 		if (_swapk_proc_compare(nextelem, proc) < 0)
 			break;
@@ -310,7 +322,7 @@ int _swapk_proc_compare(swapk_proc_t *proca, swapk_proc_t *procb)
 
 bool _swapk_is_proc_ready(swapk_scheduler_t *sch)
 {
-	swapk_proc_t *next = sch->current;
+	swapk_proc_t *next = sch->procqueue;
 
 	while (next) {
 		if (next->ready) {
@@ -328,11 +340,10 @@ void *_swapk_system_entry(void* arg)
 	swapk_scheduler_t *sch = (swapk_scheduler_t*) arg;
 
 	for (;;) {
-		if (sch->procqueue)
+		if (!sch->procqueue)
 			break;
 
 		swapk_maybe_switch_context(sch);
-		sch->poll_irq(NULL);
 	}
 
 	return arg;
@@ -367,5 +378,4 @@ void _swapk_proc_swap(swapk_scheduler_t *sch, swapk_proc_t *current,
 	_swapk_current = &current->stack->stackptr;
 	_swapk_next = &next->stack->stackptr;
 	swapk_set_pending();
-	sch->poll_irq(NULL);
 }

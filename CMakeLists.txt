@@ -21,7 +21,7 @@ target_sources(${PROJECT_NAME} PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}/src/kernel.S
   ${CMAKE_CURRENT_LIST_DIR}/src/swapk.c)
 
-pico_enable_stdio_usb(${PROJECT_NAME} 0)
+pico_enable_stdio_usb(${PROJECT_NAME} 1)
 pico_enable_stdio_uart(${PROJECT_NAME} 1)
 
 target_link_libraries(${PROJECT_NAME}

@@ -46,6 +46,9 @@ swapk_startup:
 	mrs	r3, control
 	orrs	r3, r3, r4
 	msr	control, r3 /* Set proc to use PSP */
+	isb
+	bl	.swapk_enable_handler
+	bl	.swapk_startup_exit
 /* .swapk_set_handler: ** This doesn't seem to work */
 	/* Get vector table location */
 /*	ldr	r3, =vaddr_pendsv */
@@ -53,7 +56,6 @@ swapk_startup:
 /*	ldr	r4, =scb_vtor */
 /*	ldr	r4, [r4] */
 /*	adds	r3, r3, r4 */ /* Add offset for vector */
-/*	str	r2, [r3] */ /* store addr to handler in table */
 .swapk_enable_handler:
 	push	{r2-r4}
 	ldr	r4, =nvic_iser
@@ -64,6 +66,8 @@ swapk_startup:
 	orrs	r2, r2, r3
 	str	r2, [r4]
 	pop	{r2-r4}
+	bx	lr
+/*	blx	lr */
 /*.swapk_enable_main_save:	
 	push	{r0-r3}
 	movs	r4, #0
@@ -76,8 +80,9 @@ swapk_startup:
 	mov	r0, r2 /* We want to pass sch as arg */
 	blx	r1 /* Start entry function passed by C func */
 .swapk_startup_return:
-	movs	r0, #2
+	movs	r0, #0
 	msr	control, r0 /* Return to MSR */
+	isb
 	pop	{r3-r7} /* Reload regs from calling func */
 	mov	r8, r3
 	mov	r9, r4
@@ -94,14 +99,16 @@ isr_irq14:
 	mrs	r0, psp /* We need this to get back home */
 	mrs	r1, msp
 	msr	msp, r0
+	isb
 	push	{r4-r7, lr} /* Save regs */
-	mov	r0, r8
-	mov	r1, r9
-	mov	r2, r10
-	mov	r3, r11
-	push	{r0-r3}
+	mov	r4, r8
+	mov	r5, r9
+	mov	r6, r10
+	mov	r7, r11
+	push	{r4-r7}
 	mrs	r0, msp /* Return to msp */
 	msr	msp, r1
+	isb
 	ldr	r1, =_swapk_current /* This needs to be pre-loaded */
 	ldr	r1, [r1]
 	str	r0, [r1] /* Store old stack pointer */
@@ -111,6 +118,7 @@ isr_irq14:
 	ldr	r0, [r0] /* Pointer of a pointer to SP next */
 	mrs	r1, msp
 	msr	msp, r0
+	isb
 	pop	{r4-r7} /* Reload ISR stack */
 	mov	r8, r4
 	mov	r9, r5
@@ -121,6 +129,7 @@ isr_irq14:
 	mrs	r0, msp
 	msr	psp, r0 /* New stack pointer for next */
 	msr	msp, r1 /* Restore main stack pointer */
+	isb
 	cpsie	i
 	b	.isr_irq14_exit
 .isr_irq14_unpend:
@@ -233,6 +242,7 @@ swapk_register_proc:
 	mrs	r3, msp
 	ldr	r4, [r1]
 	msr	msp, r4 /* Use process's stack pointer */
+	isb
 	movs	r4, #0 /* Start with clear registers.                   */
 	movs	r5, r0 /* But we could put args in r0, r1 etc in future */
 	movs	r6, r0
@@ -260,6 +270,7 @@ swapk_register_proc:
 	mrs	r4, msp
 	str	r4, [r1] /* Store stack pointer so we can get back here */
 	msr	msp, r3 /* Restore sp */
+	isb
 	pop	{r3-r7}
 	bx	lr
 
