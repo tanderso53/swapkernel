@@ -18,6 +18,7 @@ scheduler_ptr:	.word 0
 _swapk_next:	.word 0
 	.global _swapk_current
 _swapk_current:	.word 0
+
 	.text
 scb_vtor:	.word SCB_VTOR
 vaddr_pendsv:	.word VADDR_PENDSV
@@ -148,22 +149,29 @@ swapk_unset_pending:
 	pop	{r0-r2}
 	bx	lr
 
+	/*
+	 * void swapk_register_proc(void *entry, void *stack,
+	 *                          void *end, void *arg)
+	 */
 	.global swapk_register_proc
 	.thumb_func
 	.type swapk_register_proc, function
 swapk_register_proc:
-	push	{r3-r7}
+	push	{r4-r7}
+	mov	r4, r8
+	push	{r4}
+	mov	r8, r3
 	mrs	r3, msp
 	ldr	r4, [r1]
 	msr	msp, r4 /* Use process's stack pointer */
 	isb
 	movs	r4, #0 /* Start with clear registers.                   */
-	movs	r5, r0 /* But we could put args in r0, r1 etc in future */
+	movs	r5, r2 /* But we could put args in r0, r1 etc in future */
 	movs	r6, r0
 	ldr	r7, =xpsr_start
 	ldr	r7, [r7]
 	push	{r4-r7} /* First 4 ISR stack frame */
-	movs	r4, #0
+	mov	r4, r8 /* arg to pass on entry */
 	movs	r5, #0
 	movs	r6, #0
 	movs	r7, #0
@@ -185,37 +193,7 @@ swapk_register_proc:
 	str	r4, [r1] /* Store stack pointer so we can get back here */
 	msr	msp, r3 /* Restore sp */
 	isb
-	pop	{r3-r7}
-	bx	lr
-
-	.global swapk_proc_swap
-	.thumb_func
-	.type swapk_proc_swap, function
-swapk_proc_swap:
-	cpsid	i
-.swapk_proc_save_state:
-	push	{r3-r7} /* Push regs onto stack */
-	mov	r3, r8
-	mov	r4, r9
-	mov	r5, r10
-	mov	r6, r11
-	mov	r7, r12
-	push	{r3-r7}
-	push	{lr}
-	mrs	r3, psp
-	str	r3, [r0] /* Store new stack pointer */
-.swapk_proc_load_state:
-	ldr	r1, [r1]
-	msr	psp, r1
 	pop	{r4}
-	mov	r0, r4 /* Save LR for later branch op */
-	pop	{r3-r7}
-	mov	r12, r7
-	mov	r11, r6
-	mov	r10, r5
-	mov	r9, r4
-	mov	r8, r3
-	pop	{r3, r7} /* Regs restored! */
-.swapk_proc_load_exit:
-	cpsie	i
-	bx	r0
+	mov	r8, r4
+	pop	{r4-r7}
+	bx	lr

@@ -6,7 +6,8 @@
 /* From assembly files */
 extern void *_swapk_next;
 extern void *_swapk_current;
-extern void swapk_register_proc(void *entry, void *stack, void *end);
+extern void swapk_register_proc(void *entry, void *stack, void *end,
+				void *arg);
 extern void swapk_startup(void *systemsp, swapk_entry entry,
 			  swapk_scheduler_t *sch);
 extern void swapk_set_pending();
@@ -55,7 +56,7 @@ void swapk_proc_init(swapk_scheduler_t *sch, swapk_proc_t *proc,
 	       proc->stack->stacksize);
 
 	swapk_register_proc(proc->entry, &proc->stack->stackptr,
-			    _swapk_end_proc);
+			    _swapk_end_proc, sch);
 	swapk_push_proc(sch, proc);
 }
 
