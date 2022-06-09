@@ -34,6 +34,7 @@ typedef struct swapk_proc_node {
 	swapk_entry entry;
 	bool ready;
 	int priority;
+	uint16_t pid;
 	struct swapk_proc_node *prev;
 	struct swapk_proc_node *next;
 } swapk_proc_t;
@@ -43,6 +44,7 @@ typedef struct {
 	swapk_proc_t *current;
 	swapk_proc_t *procqueue;
 	swapk_poll_irq poll_irq;
+	uint16_t proc_cnt;
 
 	/* Private members */
 	swapk_proc_t _system_proc;

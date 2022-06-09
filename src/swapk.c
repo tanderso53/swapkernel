@@ -50,6 +50,7 @@ void swapk_proc_init(swapk_scheduler_t *sch, swapk_proc_t *proc,
 	proc->prev = NULL;
 	proc->next = NULL;
 	proc->priority = priority;
+	proc->pid = sch->proc_cnt++;
 	proc->entry = entry;
 
 	memset(proc->stack->stackbase, 0,
@@ -67,6 +68,7 @@ void swapk_scheduler_init(swapk_scheduler_t *sch,
 	sch->poll_irq = pollirq_cb;
 	sch->current = NULL;
 	sch->procqueue = NULL;
+	sch->proc_cnt = 0;
 
 	/* Don't use library func to init system process, as we aren't
 	 * starting it with pendsv, so we don't want to push a
@@ -77,6 +79,7 @@ void swapk_scheduler_init(swapk_scheduler_t *sch,
 	sys->next = NULL;
 	sys->prev = NULL;
 	sys->priority = SWAPK_SYSTEM_PROC_PRIORITY;
+	sys->pid = sch->proc_cnt++;
 	sys->stack = &sch->_system_stack;
 	sys->stack->stacksize = SWAPK_SYSTEM_STACK_SIZE;
 	sys->stack->stackbase = sch->_system_stack_data;
@@ -293,7 +296,9 @@ void swapk_preempt(swapk_scheduler_t *sch)
 
 /*
 **********************************************************************
-******************** Internal API Implementation *********************
+*                                                                    *
+*                    Internal API Implementation                     *
+*                                                                    *
 **********************************************************************
 */
 
