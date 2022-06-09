@@ -1,3 +1,9 @@
+/**
+ * @file swapk.c
+ * @author Tyler J. Anderson
+ * @brief Swapkernel implementation source
+ */
+
 #include "swapk.h"
 
 #include <stdlib.h>
