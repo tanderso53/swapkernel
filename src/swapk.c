@@ -3,7 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* From assembly files */
+/*
+**********************************************************************
+*                                                                    *
+*                         Assembly Functions                         *
+*                                                                    *
+**********************************************************************
+ */
 extern void *_swapk_next;
 extern void *_swapk_current;
 extern void swapk_register_proc(void *entry, void *stack, void *end,
@@ -15,7 +21,7 @@ extern void swapk_set_pending();
 /*
 **********************************************************************
 *                                                                    *
-*                  Internal API Functions                            *
+*                      Internal API Functions                        *
 *                                                                    *
 **********************************************************************
 */
@@ -33,6 +39,8 @@ static void _swapk_proc_swap(swapk_scheduler_t *sch,
 			     swapk_proc_t *current,
 			     swapk_proc_t *next);
 
+static swapk_proc_t *_swapk_find_pid(swapk_scheduler_t *sch,
+				     swapk_pid_t pid);
 /*
 **********************************************************************
 *                                                                    *
@@ -62,13 +70,17 @@ void swapk_proc_init(swapk_scheduler_t *sch, swapk_proc_t *proc,
 }
 
 void swapk_scheduler_init(swapk_scheduler_t *sch,
-			  swapk_poll_irq pollirq_cb)
+			  swapk_callbacks_t *cb_list)
 {
 	sch->context_shift = true;
-	sch->poll_irq = pollirq_cb;
+	sch->cb_list = cb_list;
 	sch->current = NULL;
 	sch->procqueue = NULL;
 	sch->proc_cnt = 0;
+
+	/* The event system is new and not fully utilized, but it is
+	 * the future, so use it when we can */
+	swapk_event_init(&sch->events, 0);
 
 	/* Don't use library func to init system process, as we aren't
 	 * starting it with pendsv, so we don't want to push a
@@ -100,7 +112,15 @@ void swapk_maybe_switch_context(swapk_scheduler_t *sch)
 	swapk_proc_t *current;
 	swapk_proc_t *next;
 
-	/* This is the maybe part */
+	/* Not all systems are using the event system yet, but the
+	 * notify/wait functions do, so we need to check for an event
+	 * AND check sch->context_shift */
+	if (swapk_event_check(&sch->events, SWAPK_SYSTEM_EVENT_CONTEXT_SWITCH)) {
+		sch->context_shift = true;
+		swapk_event_clear(&sch->events,
+				  SWAPK_SYSTEM_EVENT_CONTEXT_SWITCH);
+	}
+
 	if (!sch->context_shift)
 		return;
 
@@ -146,6 +166,9 @@ swapk_proc_t *swapk_pop_proc(swapk_scheduler_t *sch)
 
 	if (sch->procqueue)
 		sch->procqueue->prev = NULL;
+
+	ret->next = NULL;
+	ret->prev = NULL;
 
 	return ret;
 }
@@ -208,6 +231,9 @@ swapk_proc_t *swapk_ready_proc(swapk_scheduler_t *sch,
 	swapk_proc_t *elem = NULL;
 	swapk_proc_t *prevelem = proc->prev;
 
+	if (!proc)
+		return NULL;
+
 	proc->ready = true;
 
 	/* Don't need to reorder if we are already the current proc */
@@ -234,24 +260,58 @@ swapk_proc_t *swapk_ready_proc(swapk_scheduler_t *sch,
 	return proc;
 }
 
+void swapk_wait(swapk_scheduler_t *sch, SWAPK_ABSOLUTE_TIME_T time)
+{
+	swapk_proc_t *proc;
+
+	/* Wait is expected to only be called by current proc */
+	proc = sch->current ? sch->current : &sch->_system_proc;
+	swapk_wait_proc(sch, time, proc);
+}
+
+void swapk_wait_proc(swapk_scheduler_t *sch, SWAPK_ABSOLUTE_TIME_T time,
+		     swapk_proc_t *proc)
+{
+	proc->ready = false;
+	sch->cb_list->set_alarm(time);
+	swapk_yield(sch);
+}
+
+void swapk_wait_pid(swapk_scheduler_t *sch, SWAPK_ABSOLUTE_TIME_T time,
+		    swapk_pid_t pid)
+{
+	swapk_proc_t *proc = _swapk_find_pid(sch, pid);
+
+	proc = proc ? proc : &sch->_system_proc;
+	swapk_wait_proc(sch, time, proc);
+}
+
+void swapk_notify(swapk_scheduler_t *sch, swapk_proc_t *wake_up_proc)
+{
+	swapk_ready_proc(sch, wake_up_proc);
+	swapk_preempt(sch);
+}
+
+void swapk_notify_pid(swapk_scheduler_t *sch, swapk_pid_t pid)
+{
+	swapk_proc_t *proc = _swapk_find_pid(sch, pid);
+	swapk_notify(sch, proc);
+}
+
 void swapk_idle_till_ready(swapk_scheduler_t *sch)
 {
 	while (!_swapk_is_proc_ready(sch)) {
-		sch->poll_irq(NULL);
+		sch->cb_list->poll_event(sch);
 	}
 }
 
-void swapk_preempt(swapk_scheduler_t *sch)
+void swapk_yield(swapk_scheduler_t *sch)
 {
 	swapk_proc_t *current = sch->current
 		? sch->current
 		: &sch->_system_proc;
 
 	swapk_proc_t *next = &sch->_system_proc;
-
-	/* Do not preempt a process with priority less than 0 */
-	if (current->priority < 0)
-		return;
 
 	if (sch->current) {
 		swapk_push_proc(sch, sch->current);
@@ -285,13 +345,56 @@ void swapk_preempt(swapk_scheduler_t *sch)
 #endif /* #ifdef SWAPK_EXTRA_SCHEDULER_CHECKS */
 
 	/* Swap to system thread and signal need for context shift */
-	sch->context_shift = true;
+	swapk_event_add(&sch->events,
+			SWAPK_SYSTEM_EVENT_CONTEXT_SWITCH);
 
 	/* Do not allow a process to preempt itself */
 	if (current == next)
 		return;
 
 	_swapk_proc_swap(sch, current, next);
+}
+
+void swapk_preempt(swapk_scheduler_t *sch)
+{
+	swapk_proc_t *current = sch->current
+		? sch->current
+		: &sch->_system_proc;
+
+	/* Do not preempt a process with priority less than 0 */
+	if (current->priority < 0)
+		return;
+
+	swapk_yield(sch);
+}
+
+void swapk_event_init(swapk_event_t *event, uint32_t eventmask) {
+	event->active = eventmask;
+	event->fresh = false;
+}
+
+bool swapk_event_check(swapk_event_t *event, uint32_t eventmask)
+{
+	event->fresh = false;
+	return event->active & eventmask;
+}
+
+void swapk_event_add(swapk_event_t *event, uint32_t eventmask)
+{
+	event->active |= eventmask;
+	event->fresh = true;
+}
+
+void swapk_event_clear(swapk_event_t *event, uint32_t eventmask)
+{
+	event->active &= ~eventmask;
+	event->fresh = false;
+}
+
+void swapk_event_clear_all(swapk_event_t *event)
+{
+	event->active = 0;
+	event->fresh = false;
 }
 
 /*
@@ -371,7 +474,8 @@ void _swapk_end_proc(void *arg)
 
 	/* We shouldn't get here */
 	for (;;) {
-		sch->poll_irq(NULL);
+		swapk_yield(sch);
+		sch->cb_list->poll_event(arg);
 	}
 }
 
@@ -384,4 +488,29 @@ void _swapk_proc_swap(swapk_scheduler_t *sch, swapk_proc_t *current,
 	_swapk_current = &current->stack->stackptr;
 	_swapk_next = &next->stack->stackptr;
 	swapk_set_pending();
+}
+
+swapk_proc_t *_swapk_find_pid(swapk_scheduler_t *sch,
+			      swapk_pid_t pid)
+{
+	swapk_proc_t *proc = NULL;
+
+	if (sch->current && sch->current->pid == pid) {
+		proc = sch->current;
+	} else {
+		swapk_proc_t *elem = NULL;
+		swapk_proc_t *nextelem = sch->procqueue;
+
+		while (nextelem) {
+			elem = nextelem;
+			nextelem = elem->next;
+
+			if (elem->pid == pid) {
+				proc = elem;
+				break;
+			}
+		}
+	}
+
+	return proc;
 }
