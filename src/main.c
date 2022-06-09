@@ -16,8 +16,6 @@
 SWAPK_DEFINE_STACK(stacka, SWAPK_STACK_SIZE_A);
 SWAPK_DEFINE_STACK(stackb, SWAPK_STACK_SIZE_B);
 
-extern void *scheduler_ptr;
-
 static swapk_scheduler_t sch;
 static swapk_proc_t proca;
 static swapk_proc_t procb;

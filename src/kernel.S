@@ -49,13 +49,6 @@ swapk_startup:
 	isb
 	bl	.swapk_enable_handler
 	bl	.swapk_startup_exit
-/* .swapk_set_handler: ** This doesn't seem to work */
-	/* Get vector table location */
-/*	ldr	r3, =vaddr_pendsv */
-/*	ldr	r3, [r3] */
-/*	ldr	r4, =scb_vtor */
-/*	ldr	r4, [r4] */
-/*	adds	r3, r3, r4 */ /* Add offset for vector */
 .swapk_enable_handler:
 	push	{r2-r4}
 	ldr	r4, =nvic_iser
@@ -67,15 +60,6 @@ swapk_startup:
 	str	r2, [r4]
 	pop	{r2-r4}
 	bx	lr
-/*	blx	lr */
-/*.swapk_enable_main_save:	
-	push	{r0-r3}
-	movs	r4, #0
-	ldr	r5, =swapk_set_pending
-	ldr	r6, =scheduler_ptr
-	ldr	r6, [r6]
-	mrs	r7, xpsr
-	push	{r4-r7}*/
 .swapk_startup_exit:
 	mov	r0, r2 /* We want to pass sch as arg */
 	blx	r1 /* Start entry function passed by C func */
@@ -140,76 +124,6 @@ isr_irq14:
 	b	swapk_unset_pending
 .isr_irq14_exit:
 	bx	r3 /* Branch to unstacking */
-
-	@ swapk_pendsv(void swapk_pendsv(void *newstack:r0,
-	@                                void *oldstack:r1)
-	@ Handler for pendsv to swap current process
-	@
-	@ NOTE: This won't work, because the ISR handler is
-	@ also pushing and popping things, so we don't know
-	@ where the stack frame is
-	.global swapk_pendsv
-	.thumb_func
-	.type swapk_pendsv, function
-swapk_pendsv:	
-	cpsid	i
-	push	{r0, r7}
-swapk_pendsv_save:
-	mrs	r2, psp
-	str	r2, [r0]
-	ldr	r0, [r0]
-	ldr	r1, [r1]
-	cmp	r0, r1
-	beq	.swapk_pendsv_exit
-	adds	r0, #4
-	pop	{r3-r6}
-	stm	r0!, {r3-r6}
-	pop	{r3-r6}
-	stm	r0!, {r3-r6}
-.swapk_pendsv_load:
-	msr	psp, r1
-	adds	r1, #32 /* Get the stack location for next */
-	ldmfd	r1!, {r3-r6}
-	push	{r3-r6}
-	ldmfd	r1!, {r3-r6}
-	push	{r3-r6}
-	cmp	r5, #0
-	bne	.swapk_pendsv_exit
-.swapk_pendsv_load_scheduler:
-	pop	{r0-r7}
-	ldr	r0, =return_msp
-	ldr	r0, [r0]
-	bx	r0
-.swapk_pendsv_exit:
-	pop	{r0, r7}
-	cpsie i
-	bx lr
-
-	@ swapk_wrapper_start()
-	@
-	@ Wrapper for calling pico functions
-	.global swapk_wrapper_start
-	.thumb_func
-	.type swapk_wrapper_start, function
-swapk_wrapper_start:
-	mrs	r1, psp
-	stm	r1!, {r4-r7}
-	movs	r2, 0
-	msr	control, r2
-	blx	lr
-
-	@ swapk_wrapper_end()
-	@
-	@ Wrapper for calling pico functions
-	.global swapk_wrapper_end
-	.thumb_func
-	.type swapk_wrapper_end, function
-swapk_wrapper_end:
-	mrs	r1, psp
-	ldm	r1!, {r4-r7}
-	movs	r2, 2
-	msr	control, r2
-	bx	lr
 
 	@ swapk_set_pending()
 	@

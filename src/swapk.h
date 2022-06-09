@@ -20,12 +20,6 @@
 		.stackptr = &name ## _data[stack_size - 1]	\
 	};
 
-extern void swapk_pendsv(void *newstack,
-			 void *oldstack);
-extern void swapk_wrapper_start();
-extern void swapk_wrapper_end();
-extern void swapk_set_pending();
-
 typedef void *(*swapk_entry)(void*);
 typedef void (*swapk_poll_irq)(void*);
 
