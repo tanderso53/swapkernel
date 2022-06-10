@@ -32,6 +32,8 @@ extern void swapk_set_pending();
 **********************************************************************
 */
 
+struct timespec swapk_empty_time = {0};
+
 static int _swapk_proc_compare(swapk_proc_t *proca,
 			       swapk_proc_t *procb);
 
@@ -214,20 +216,26 @@ swapk_proc_t *swapk_push_proc(swapk_scheduler_t *sch,
 		nextelem = elem->next;
 	}
 
+	/* We are first */
+	if (!elem) {
+		sch->procqueue = proc;
+		proc->next = nextelem;
+		proc->prev = NULL;
+		nextelem->prev = proc;
+
 	/* Check if we are last */
-	if (!nextelem) {
+	} else if (!nextelem) {
 		elem->next = proc;
 		proc->prev = elem;
 		proc->next = NULL;
 
-		return proc;
-	}
-
 	/* Guess we are in the middle */
-	elem->next = proc;
-	proc->prev = elem;
-	proc->next = nextelem;
-	nextelem->prev = proc;
+	} else {
+		elem->next = proc;
+		proc->prev = elem;
+		proc->next = nextelem;
+		nextelem->prev = proc;
+	}
 
 	return proc;
 }
@@ -235,10 +243,11 @@ swapk_proc_t *swapk_push_proc(swapk_scheduler_t *sch,
 swapk_proc_t *swapk_ready_proc(swapk_scheduler_t *sch,
 			       swapk_proc_t *proc) {
 	swapk_proc_t *elem = NULL;
-	swapk_proc_t *prevelem = proc->prev;
 
 	if (!proc)
 		return NULL;
+
+	swapk_proc_t *prevelem = proc->prev;
 
 	proc->ready = true;
 
@@ -279,7 +288,10 @@ void swapk_wait_proc(swapk_scheduler_t *sch, SWAPK_ABSOLUTE_TIME_T time,
 		     swapk_proc_t *proc)
 {
 	proc->ready = false;
-	sch->cb_list->set_alarm(time);
+
+	if (memcmp(&time, &SWAPK_FOREVER, sizeof(struct timespec)))
+		sch->cb_list->set_alarm(time, proc);
+
 	swapk_yield(sch);
 }
 

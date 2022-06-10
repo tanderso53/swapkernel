@@ -24,8 +24,14 @@
 #endif
 
 #ifndef SWAPK_ABSOLUTE_TIME_T
+
 #include <time.h>
-#define SWAPK_ABSOLUTE_TIME_T struct timespec *
+#define SWAPK_ABSOLUTE_TIME_T struct timespec
+
+#ifndef SWAPK_FOREVER
+#define SWAPK_FOREVER swapk_empty_time
+#endif /* #ifndef SWAPK_FOREVER */
+
 #endif /* #ifndef SWAPK_ABSOLUTE_TIME_T */
 
 #define SWAPK_INVALID_PID ((swapk_pid_t)-1)
@@ -44,6 +50,8 @@
 		.stackbase = name ## _data,			\
 		.stackptr = &name ## _data[stack_size - 1]	\
 	};
+
+extern struct timespec swapk_empty_time;
 
 typedef uint16_t swapk_pid_t;
 typedef void *(*swapk_entry)(void*);
@@ -89,7 +97,7 @@ typedef struct {
 
 typedef struct {
 	void (*poll_event)(void*);
-	void (*set_alarm)(SWAPK_ABSOLUTE_TIME_T time);
+	void (*set_alarm)(SWAPK_ABSOLUTE_TIME_T, swapk_proc_t*);
 } swapk_callbacks_t;
 
 typedef struct {
@@ -162,6 +170,8 @@ void swapk_wait_pid(swapk_scheduler_t *sch,
 		    swapk_pid_t pid);
 
 void swapk_notify(swapk_scheduler_t *sch, swapk_proc_t *wake_up_proc);
+
+void swapk_notify_pid(swapk_scheduler_t *sch, swapk_pid_t pid);
 
 /**
  * @}
