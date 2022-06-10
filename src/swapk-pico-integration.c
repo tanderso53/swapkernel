@@ -23,6 +23,8 @@ static swapk_pico_lock_map_t *_swapk_pico_lock_maps;
 static swapk_scheduler_t _swapk_pico_scheduler;
 static swapk_callbacks_t _swapk_pico_cbs;
 static unsigned int _swapk_pico_lock_map_cntr;
+static alarm_pool_t *_swapk_pico_alarm_pool;
+
 static struct timespec _swapk_pico_get_timespec(absolute_time_t time);
 static absolute_time_t _swapk_pico_get_absolute_time(struct timespec time);
 
@@ -40,6 +42,10 @@ void swapk_pico_init() {
 	_swapk_pico_cbs.poll_event = _swapk_pico_poll_event;
 	_swapk_pico_cbs.set_alarm = _swapk_pico_set_alarm;
 	_swapk_pico_lock_map_cntr = 0;
+
+	/* Use a separate alarm pool for swapkernel */
+	_swapk_pico_alarm_pool = alarm_pool_create(SWAPK_PICO_HARDWARE_ALARM_NO,
+						   SWAPK_PICO_MAX_TIMERS);
 
 	for (int i = 0; i < ARRAY_LEN(_swapk_pico_lock_map_data); ++i) {
 		_swapk_pico_lock_map_data[i].used = false;
@@ -69,6 +75,12 @@ void swapk_pico_wait(absolute_time_t time,
 	lock_map->lock_core = *lock_core;
 	spin_unlock(lock_core->spin_lock, save);
 
+	swapk_wait(&_swapk_pico_scheduler,
+		   _swapk_pico_get_timespec(time));
+}
+
+void swapk_pico_yield_until(absolute_time_t time)
+{
 	swapk_wait(&_swapk_pico_scheduler,
 		   _swapk_pico_get_timespec(time));
 }
@@ -108,7 +120,15 @@ void swapk_pico_notify(lock_core_t *lock_core, uint32_t save)
 	if (!lock_map)
 		return;
 
+	__sev();
 	swapk_notify_pid(&_swapk_pico_scheduler, pid);
+}
+
+lock_owner_id_t swapk_pico_get_current_pid()
+{
+	return _swapk_pico_scheduler.current
+		? _swapk_pico_scheduler.current->pid
+		: _swapk_pico_scheduler._system_proc.pid;
 }
 
 swapk_pico_lock_map_t *_swapk_pico_find_free_lock_map()
@@ -136,7 +156,8 @@ swapk_pico_lock_map_t *_swapk_pico_find_free_lock_map()
 			next = elem->next;
 		}
 
-		elem->next = lock_map;
+		if (elem)
+			elem->next = lock_map;
 		lock_map->prev = elem;
 		lock_map->next = NULL;
 	}
@@ -154,13 +175,17 @@ void _swapk_pico_poll_event(void *arg)
 int64_t _swapk_pico_alarm_handler(alarm_id_t id, void *user_data)
 {
 	swapk_notify(&_swapk_pico_scheduler, (swapk_proc_t*) user_data);
+
+	return 0;
 }
 
 void _swapk_pico_set_alarm(SWAPK_ABSOLUTE_TIME_T time,
 			   swapk_proc_t *proc)
 {
-	add_alarm_at(_swapk_pico_get_absolute_time(time),
-		     _swapk_pico_alarm_handler, (void*) proc, true);
+	alarm_pool_add_alarm_at(_swapk_pico_alarm_pool,
+				_swapk_pico_get_absolute_time(time),
+				_swapk_pico_alarm_handler,
+				(void*) proc, true);
 }
 
 static struct timespec _swapk_pico_get_timespec(absolute_time_t time)

@@ -29,9 +29,8 @@ target_link_libraries(${PROJECT_NAME}
   pico_stdlib pico_multicore pico_util
   hardware_exception)
 
- target_compile_definitions(${PROJECT_NAME} INTERFACE
-   lock_owner_id_t=uint16_t
-   LOCK_INVALID_OWNER_ID=SWAPK_INVALID_PID)
+target_compile_definitions(${PROJECT_NAME} PUBLIC
+  PICO_TIME_DEFAULT_ALARM_POOL_DISABLED=1)
 #   lock_get_caller_owner_id
 #   lock_internal_spin_unlock_with_wait
 #   lock_internal_spin_unlock_with_notify
