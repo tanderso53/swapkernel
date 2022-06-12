@@ -30,12 +30,8 @@ target_link_libraries(${PROJECT_NAME}
   hardware_exception)
 
 target_compile_definitions(${PROJECT_NAME} PUBLIC
-  PICO_TIME_DEFAULT_ALARM_POOL_DISABLED=1)
-#   lock_get_caller_owner_id
-#   lock_internal_spin_unlock_with_wait
-#   lock_internal_spin_unlock_with_notify
-#   lock_internal_spin_unlock_with_best_effort_wait_or_timeout
-#   sync_internal_yield_until_before)
+  PICO_TIME_DEFAULT_ALARM_POOL_DISABLED=1
+  SWAPK_HARDWARE_THREADS=1)
 
 target_include_directories(pico_sync_core INTERFACE
   ${CMAKE_CURRENT_LIST_DIR}/src)

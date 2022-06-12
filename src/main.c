@@ -24,26 +24,6 @@ static void *procb_entry(void*);
 
 void *proca_entry(void *arg)
 {
-	printf("We made it to proc A!\n");
-
-	for (;;) {
-		printf("Head of loop\n");
-		sleep_ms(10000);
-	}
-}
-
-void *procb_entry(void *arg)
-{
-	printf("We made it to proc B!\n");
-	sleep_ms(18000);
-
-	printf("Procb is ending!!!!\n");
-
-	return arg;
-}
-
-int main()
-{
 	stdio_usb_init();
 
 	while(!stdio_usb_connected()) {
@@ -52,6 +32,26 @@ int main()
 
 	printf("You are connected!\n");
 
+	for (;;) {
+		printf("Hello World from Proc A on core %d!\n",
+		       swapk_pico_scheduler()->cb_list->core_get_id());
+		sleep_ms(10000);
+	}
+}
+
+void *procb_entry(void *arg)
+{
+	printf("Hello World from Proc B on core %d!\n",
+		       swapk_pico_scheduler()->cb_list->core_get_id());
+	sleep_ms(18000);
+
+	printf("Proc B is ending!!!!\n");
+
+	return arg;
+}
+
+int main()
+{
 	swapk_pico_init();
 	swapk_pico_proc_init(&proca, &stacka, proca_entry, 2);
 	swapk_pico_proc_init(&procb, &stackb, procb_entry, 3);

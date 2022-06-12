@@ -23,6 +23,7 @@ _swapk_current:	.word 0
 scb_vtor:	.word SCB_VTOR
 vaddr_pendsv:	.word VADDR_PENDSV
 nvic_iser:	.word NVIC_ISER
+nvic_icer:	.word NVIC_ICER
 nvic_ispr:	.word NVIC_ISPR
 nvic_icpr:	.word NVIC_ICPR
 return_psp:	.word 0xfffffffd
@@ -76,6 +77,27 @@ swapk_startup:
 	mov	r12, r7
 	pop	{r3-r7, pc} /* Branch to calling func */
 
+	.global swapk_svc_enable
+	.thumb_func
+	.type swapk_svc_enable, function
+swapk_svc_enable:
+	push	{r0-r1, lr}
+	ldr	r0, =nvic_iser
+	b	.swapk_svc_set_reg
+
+	.global swapk_svc_disable
+	.thumb_func
+	.type swapk_svc_disable, function
+swapk_svc_disable:
+	push	{r0-r1, lr}
+	ldr	r0, =nvic_icer
+.swapk_svc_set_reg:
+	ldr	r0, [r0]
+	movs	r1, #1
+	lsls	r1, r1, #11 /* SVC is exception 11 */
+	str	r1, [r0]
+	pop	{r0-r1, pc}
+
 	.global isr_irq14
 	.thumb_func
 	.type isr_irq14, function
@@ -115,6 +137,7 @@ isr_irq14:
 	msr	psp, r0 /* New stack pointer for next */
 	msr	msp, r1 /* Restore main stack pointer */
 	isb
+	bl	swapk_svc_enable
 	cpsie	i
 	b	.isr_irq14_exit
 .isr_irq14_unpend:
@@ -125,6 +148,7 @@ isr_irq14:
 	b	swapk_unset_pending
 .isr_irq14_exit:
 	bx	r3 /* Branch to unstacking */
+	
 
 	@ swapk_set_pending()
 	@
@@ -148,6 +172,18 @@ swapk_unset_pending:
 	str	r2, [r0]
 	pop	{r0-r2}
 	bx	lr
+
+	.global swapk_svc_pend
+	.thumb_func
+	.type swapk_svc_pend, function
+swapk_svc_pend:
+	push	{r0-r1, lr}
+	ldr	r0, =nvic_ispr
+	ldr	r0, [r0]
+	movs	r1, #1
+	lsls	r1, r1, #11 /* SVC is exception 11 */
+	str	r1, [r0]
+	pop	{r0-r1, pc}
 
 	/*
 	 * void swapk_register_proc(void *entry, void *stack,
