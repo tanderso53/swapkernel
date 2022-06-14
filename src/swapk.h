@@ -10,6 +10,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "queue.h"
+
 /**
  * @defgroup swapk_api Swapkernel API
  * @{
@@ -104,9 +106,11 @@ typedef struct swapk_proc_node {
 	 * process is not running on any core
 	 */
 	int core_id;
-	struct swapk_proc_node *prev;
-	struct swapk_proc_node *next;
+
+	TAILQ_ENTRY(swapk_proc_node) _tailq_entry;
 } swapk_proc_t;
+
+TAILQ_HEAD(swapk_proc_queue, swapk_proc_node);
 
 /**
  * @}
@@ -163,7 +167,7 @@ typedef struct {
 typedef struct {
 	bool context_shift[SWAPK_HARDWARE_THREADS];
 	swapk_proc_t *current[SWAPK_HARDWARE_THREADS];
-	swapk_proc_t *procqueue;
+	struct swapk_proc_queue procqueue;
 	swapk_callbacks_t *cb_list;
 	swapk_event_t events[SWAPK_HARDWARE_THREADS];
 	uint16_t proc_cnt;
@@ -197,6 +201,9 @@ void swapk_yield(swapk_scheduler_t *sch);
 void swapk_preempt(swapk_scheduler_t *sch);
 
 void swapk_call_scheduler_available(swapk_scheduler_t *sch);
+
+/** @brief Sort processes in the scheduler's queue */
+void swapk_scheduler_sort(swapk_scheduler_t *sch);
 
 /**
  * @}

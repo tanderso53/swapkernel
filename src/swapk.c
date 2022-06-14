@@ -74,6 +74,9 @@ static bool _swapk_is_swapk_forever(SWAPK_ABSOLUTE_TIME_T time);
 
 static bool _swapk_is_swapk_nowait(SWAPK_ABSOLUTE_TIME_T time);
 
+static void _swapk_insert_sorted_forward(struct swapk_proc_queue *q,
+					 swapk_proc_t *proc);
+
 /*
 **********************************************************************
 *                                                                    *
@@ -88,8 +91,6 @@ void swapk_proc_init(swapk_scheduler_t *sch, swapk_proc_t *proc,
 {
 	proc->stack = stack;
 	proc->ready = true;
-	proc->prev = NULL;
-	proc->next = NULL;
 	proc->priority = priority;
 	proc->pid = sch->proc_cnt++;
 	proc->entry = entry;
@@ -108,7 +109,7 @@ void swapk_scheduler_init(swapk_scheduler_t *sch,
 			  swapk_callbacks_t *cb_list)
 {
 	sch->cb_list = cb_list;
-	sch->procqueue = NULL;
+	TAILQ_INIT(&sch->procqueue);
 	sch->proc_cnt = 0;
 	sch->cb_list->sem_sch_set_permits(1);
 
@@ -136,8 +137,6 @@ void swapk_scheduler_init(swapk_scheduler_t *sch,
 	swapk_proc_t *sys = &sch->_system_proc;
 	sys->entry = _swapk_system_entry;
 	sys->ready = true;
-	sys->next = NULL;
-	sys->prev = NULL;
 	sys->priority = SWAPK_SYSTEM_PROC_PRIORITY;
 	sys->pid = sch->proc_cnt++;
 	sys->stack = &sch->_system_stack;
@@ -166,16 +165,11 @@ swapk_proc_t *swapk_pop_proc(swapk_scheduler_t *sch)
 {
 	swapk_proc_t *ret;
 
-	if (!(ret = sch->procqueue))
+	if (TAILQ_EMPTY(&sch->procqueue))
 		return NULL;
 
-	sch->procqueue = sch->procqueue->next;
-
-	if (sch->procqueue)
-		sch->procqueue->prev = NULL;
-
-	ret->next = NULL;
-	ret->prev = NULL;
+	ret = TAILQ_FIRST(&sch->procqueue);
+	TAILQ_REMOVE(&sch->procqueue, ret, _tailq_entry);
 
 	return ret;
 }
@@ -183,58 +177,7 @@ swapk_proc_t *swapk_pop_proc(swapk_scheduler_t *sch)
 swapk_proc_t *swapk_push_proc(swapk_scheduler_t *sch,
 			      swapk_proc_t *proc)
 {
-	swapk_proc_t *elem = NULL;
-	swapk_proc_t *nextelem = sch->procqueue;
-
-	/* Check if we are first */
-	if (!nextelem) {
-		sch->procqueue = proc;
-		proc->next = NULL;
-		proc->prev = NULL;
-
-		return proc;
-	}
-
-	/* Make sure we aren't already in the list */
-	while (nextelem) {
-		if (nextelem == proc)
-			return proc;
-
-		elem = nextelem;
-		nextelem = elem->next;
-	}
-
-	elem = NULL;
-	nextelem = sch->procqueue;
-
-	while (nextelem) {
-		if (_swapk_proc_compare(nextelem, proc) < 0)
-			break;
-
-		elem = nextelem;
-		nextelem = elem->next;
-	}
-
-	/* We are first */
-	if (!elem) {
-		sch->procqueue = proc;
-		proc->next = nextelem;
-		proc->prev = NULL;
-		nextelem->prev = proc;
-
-	/* Check if we are last */
-	} else if (!nextelem) {
-		elem->next = proc;
-		proc->prev = elem;
-		proc->next = NULL;
-
-	/* Guess we are in the middle */
-	} else {
-		elem->next = proc;
-		proc->prev = elem;
-		proc->next = nextelem;
-		nextelem->prev = proc;
-	}
+	_swapk_insert_sorted_forward(&sch->procqueue, proc);
 
 	return proc;
 }
@@ -395,6 +338,29 @@ void swapk_event_clear_all(swapk_event_t *event)
 	event->fresh = false;
 }
 
+void swapk_scheduler_sort(swapk_scheduler_t *sch)
+{
+	/* Sort processes */
+	swapk_proc_t *elem;
+	swapk_proc_t *etemp;
+	swapk_proc_t *tq_elem;
+	swapk_proc_t *tq_temp;
+	struct swapk_proc_queue *q = &sch->procqueue;
+	struct swapk_proc_queue tq;
+
+	/* Merge type sort with components pushed and sorted onto a
+	 * new list */
+	TAILQ_INIT(&tq);
+
+	TAILQ_FOREACH_SAFE(elem, q, _tailq_entry, etemp) {
+		TAILQ_REMOVE(q, elem, _tailq_entry);
+		_swapk_insert_sorted_forward(&tq, elem);
+	}
+
+	/* Swap over the sorted queue to the scheduler queue */
+	TAILQ_SWAP(&tq, q, swapk_proc_node, _tailq_entry);
+}
+
 /*
 **********************************************************************
 *                                                                    *
@@ -429,15 +395,12 @@ int _swapk_proc_compare(swapk_proc_t *proca, swapk_proc_t *procb)
 
 bool _swapk_is_proc_ready(swapk_scheduler_t *sch)
 {
-	swapk_proc_t *next = sch->procqueue;
+	swapk_proc_t *elem;
 
-	while (next) {
-		if (next->ready) {
+	TAILQ_FOREACH(elem, &sch->procqueue, _tailq_entry)
+		if (elem->ready) {
 			return true;
 		}
-
-		next = next->next;
-	}
 
 	return false;
 }
@@ -513,18 +476,13 @@ swapk_proc_t *_swapk_find_pid(swapk_scheduler_t *sch,
 	if (sch->current[cid] && sch->current[cid]->pid == pid) {
 		proc = sch->current[cid];
 	} else {
-		swapk_proc_t *elem = NULL;
-		swapk_proc_t *nextelem = sch->procqueue;
+		swapk_proc_t *elem;
 
-		while (nextelem) {
-			elem = nextelem;
-			nextelem = elem->next;
-
+		TAILQ_FOREACH(elem, &sch->procqueue, _tailq_entry)
 			if (elem->pid == pid) {
 				proc = elem;
 				break;
 			}
-		}
 	}
 
 	return proc;
@@ -641,26 +599,7 @@ bool _swapk_maybe_switch_context(swapk_scheduler_t *sch)
 		current = &sch->_system_proc;
 	}
 
-	/* Sort processes */
-	swapk_proc_t *elem = NULL;
-	swapk_proc_t *nextelem = sch->procqueue;
-	while (nextelem) {
-		elem = nextelem;
-		nextelem = elem->next;
-
-		if (_swapk_proc_compare(elem, nextelem) < 0) {
-			nextelem->prev = elem->prev;
-			elem->next = nextelem->next;
-			nextelem->next = elem;
-			elem->prev = nextelem;
-			elem = nextelem;
-			nextelem = elem->next;
-
-			if (!elem->prev) {
-				sch->procqueue = elem;
-			}
-		}
-	}
+	swapk_scheduler_sort(sch);
 
 	next = swapk_pop_proc(sch);
 
@@ -717,4 +656,33 @@ bool _swapk_is_swapk_nowait(SWAPK_ABSOLUTE_TIME_T time)
 	return !memcmp(&time, &SWAPK_NOWAIT, sizeof(struct timespec));
 	/* return time.tv_nsec == SWAPK_NOWAIT.tv_nsec && */
 	/* 	time.tv_sec == SWAPK_NOWAIT.tv_sec; */
+}
+
+void _swapk_insert_sorted_forward(struct swapk_proc_queue *q,
+				  swapk_proc_t *proc)
+{
+	swapk_proc_t *elem, *tempelem;
+
+	/* Check if we are first */
+	if (TAILQ_EMPTY(q)) {
+		TAILQ_INSERT_TAIL(q, proc, _tailq_entry);
+
+		return;
+	}
+
+	/* Make sure we aren't already in the list */
+	TAILQ_FOREACH(elem, q, _tailq_entry)
+		if (elem == proc)
+			return;
+
+	TAILQ_FOREACH_SAFE(elem, q, _tailq_entry, tempelem) {
+		if (_swapk_proc_compare(elem, proc) < 0) {
+			TAILQ_INSERT_BEFORE(elem, proc, _tailq_entry);
+			break;
+		}
+
+		/* Need this or we will lose elements */
+		if (!TAILQ_NEXT(elem, _tailq_entry))
+			TAILQ_INSERT_TAIL(q, proc, _tailq_entry);
+	}
 }

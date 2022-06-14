@@ -17,12 +17,12 @@ typedef struct swapk_pico_lock_map_node {
 	lock_core_t lock_core;
 	swapk_pid_t pid;
 	bool used;
-	struct swapk_pico_lock_map_node *prev;
-	struct swapk_pico_lock_map_node *next;
+	TAILQ_ENTRY(swapk_pico_lock_map_node) _tailq;
 } swapk_pico_lock_map_t;
 	
 static swapk_pico_lock_map_t _swapk_pico_lock_map_data[SWAPK_PICO_LOCK_MAP_LENGTH];
-static swapk_pico_lock_map_t *_swapk_pico_lock_maps;
+static TAILQ_HEAD(_swapk_pico_lock_queue, swapk_pico_lock_map_node)
+	_swapk_pico_lock_maps, _swapk_pico_lock_maps_free;
 static swapk_scheduler_t _swapk_pico_scheduler;
 static swapk_callbacks_t _swapk_pico_cbs;
 static unsigned int _swapk_pico_lock_map_cntr;
@@ -39,6 +39,8 @@ static void _swapk_pico_poll_event(void *arg);
 static void _swapk_pico_set_alarm(SWAPK_ABSOLUTE_TIME_T time,
 				  swapk_proc_t *proc);
 static swapk_pico_lock_map_t *_swapk_pico_find_free_lock_map();
+static swapk_pico_lock_map_t
+	*_swapk_pico_free_lock_map(swapk_pico_lock_map_t *lock_map);
 static void _swapk_pico_cb_signal_event(void* arg);
 static void _swapk_pico_entry_wrapper();
 static void _swapk_pico_cb_core_launch(SWAPK_CORE_ID_T cid,
@@ -73,8 +75,13 @@ void swapk_pico_init() {
 
 	_swapk_pico_lock_map_cntr = 0;
 
+	/* Add all lock maps to the free queue so we can find them
+	 * when we need them */
 	for (int i = 0; i < ARRAY_LEN(_swapk_pico_lock_map_data); ++i) {
-		_swapk_pico_lock_map_data[i].used = false;
+		swapk_pico_lock_map_t *elem = &_swapk_pico_lock_map_data[i];
+		elem->used = false;
+		TAILQ_INSERT_TAIL(&_swapk_pico_lock_maps_free,
+				  elem, _tailq);
 	}
 
 	swapk_scheduler_init(&_swapk_pico_scheduler, &_swapk_pico_cbs);
@@ -107,6 +114,10 @@ void swapk_pico_wait(absolute_time_t time,
 		swapk_pico_lock_map_t *lock_map;
 
 		lock_map = _swapk_pico_find_free_lock_map();
+
+		if (!lock_map)
+			panic("Swapk_pico no lock maps available!!!\n");
+
 		lock_map->pid = _swapk_pico_scheduler.current[cid]->pid;
 		lock_map->lock_core = *lock_core;
 		spin_unlock(lock_core->spin_lock, save);
@@ -119,42 +130,37 @@ void swapk_pico_yield_until(absolute_time_t time)
 {
 	swapk_wait(&_swapk_pico_scheduler,
 		   _swapk_pico_get_timespec(time));
+
+	/* This is where we are returning from the scheduler, so make sure
+	 * everything is popped off the stack from the assembly functions
+	 * before returning */
 	__dsb();
 	__isb();
 }
 
 void swapk_pico_notify(lock_core_t *lock_core, uint32_t save)
 {
-	swapk_pico_lock_map_t *next = NULL;
-	swapk_pico_lock_map_t *lock_map = _swapk_pico_lock_maps;
+	swapk_pico_lock_map_t *lock_map = NULL;
+	swapk_pico_lock_map_t *tlm = NULL;
+	struct _swapk_pico_lock_queue *lq = &_swapk_pico_lock_maps;
 	pid_t pid = 0;
 
-	while (lock_map) {
-		next = lock_map->next;
-
-		if (lock_map->lock_core.spin_lock == lock_core->spin_lock
+	TAILQ_FOREACH_SAFE(lock_map, lq, _tailq, tlm) {
+		/* Free the matching lock map */
+		if (lock_map &&
+		    lock_map->lock_core.spin_lock == lock_core->spin_lock
 		    && lock_map->used) {
 			pid = lock_map->pid;
-			lock_map->used = false;
-			if (lock_map->prev) {
-				lock_map->prev->next = next;
-			} else {
-				_swapk_pico_lock_maps = next;
-			}
-
-			if (next) {
-				next->prev = lock_map->prev;
-			}
+			_swapk_pico_free_lock_map(lock_map);
 
 			break;
 		}
-
-		lock_map = next;
 	}
 
 	spin_unlock(lock_core->spin_lock, save);
 
-	/* This shouldn't happend */
+	/* Don't preempt if the lock was never registered in the first
+	 * place */
 	if (!lock_map)
 		return;
 
@@ -173,36 +179,41 @@ lock_owner_id_t swapk_pico_get_current_pid()
 
 swapk_pico_lock_map_t *_swapk_pico_find_free_lock_map()
 {
-	swapk_pico_lock_map_t *lock_map = NULL;
+	swapk_pico_lock_map_t *lock_map;
 
-	while(_swapk_pico_lock_map_data[_swapk_pico_lock_map_cntr].used) {
-		if (++_swapk_pico_lock_map_cntr == ARRAY_LEN(_swapk_pico_lock_map_data)) {
-			_swapk_pico_lock_map_cntr = 0;
-		}
+	lock_map = TAILQ_FIRST(&_swapk_pico_lock_maps_free);
+
+	/* Will be NULL if no free ones available, so let's not operate
+	 * on the NULL ones */
+	if (lock_map) {
+		/* Mark this one as taken */
+		TAILQ_REMOVE(&_swapk_pico_lock_maps_free, lock_map,
+			     _tailq);
+		TAILQ_INSERT_TAIL(&_swapk_pico_lock_maps, lock_map,
+				  _tailq);
+		lock_map->used = true;
 	}
 
-	lock_map = &_swapk_pico_lock_map_data[_swapk_pico_lock_map_cntr];
+	return lock_map;
+}
 
-	if (!_swapk_pico_lock_maps) {
-		_swapk_pico_lock_maps = lock_map;
-		lock_map->prev = NULL;
-		lock_map->next = NULL;
-	} else {
-		swapk_pico_lock_map_t *elem = NULL;
-		swapk_pico_lock_map_t *next = _swapk_pico_lock_maps;
+swapk_pico_lock_map_t *_swapk_pico_free_lock_map(swapk_pico_lock_map_t *lock_map)
+{
+	swapk_pico_lock_map_t *elem;
+	struct _swapk_pico_lock_queue *used, *free;
 
-		while (next) {
-			elem = next;
-			next = elem->next;
-		}
+	used = &_swapk_pico_lock_maps;
+	free = &_swapk_pico_lock_maps_free;
 
-		if (elem)
-			elem->next = lock_map;
-		lock_map->prev = elem;
-		lock_map->next = NULL;
-	}
+	/* First check that the map is used */
+	TAILQ_FOREACH(elem, used, _tailq)
+		if (elem == lock_map)
+			return NULL; /* NULL if not added to free */
 
-	lock_map->used = true;
+	/* Remove from used and add to end of free */
+	TAILQ_REMOVE(used, lock_map, _tailq);
+	TAILQ_INSERT_TAIL(free, lock_map, _tailq);
+	lock_map->used = false;
 
 	return lock_map;
 }
