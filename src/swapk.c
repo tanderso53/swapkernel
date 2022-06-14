@@ -500,6 +500,7 @@ void _swapk_proc_swap(swapk_scheduler_t *sch, swapk_proc_t *current,
 
 	_swapk_current = &current->stack->stackptr;
 	_swapk_next = &next->stack->stackptr;
+	scheduler_ptr = sch;
 	swapk_set_pending();
 }
 
@@ -596,6 +597,23 @@ int _swapk_call_scheduler_available(int argc, void **argv)
 	return 0;
 }
 
+int _swapk_scheduler_available(void *arg)
+{
+	swapk_scheduler_t *sch = (swapk_scheduler_t*) arg;
+
+	for (SWAPK_CORE_ID_T i = 0; i < SWAPK_HARDWARE_THREADS; ++i) {
+		if (i != sch->cb_list->core_get_id()) {
+			swapk_event_add(&sch->events[i],
+					SWAPK_SYSTEM_EVENT_SCH_AVAILABLE);
+		}
+	}
+
+	sch->cb_list->sem_sch_give();
+	sch->cb_list->signal_event(sch);
+
+	return 0;
+}
+
 bool _swapk_maybe_switch_context(swapk_scheduler_t *sch)
 {
 	swapk_proc_t *current;
@@ -651,7 +669,7 @@ bool _swapk_maybe_switch_context(swapk_scheduler_t *sch)
 	if (next && next->ready && next->core_affinity != (-1 * (cid + 1))) {
 		sch->current[cid] = next;
 		sch->context_shift[cid] = false;
-		swapk_call_scheduler_available(sch);
+		/* swapk_call_scheduler_available(sch); */
 		_swapk_proc_swap(sch, current, next);
 
 		return true;

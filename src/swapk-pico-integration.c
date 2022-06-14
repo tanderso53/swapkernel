@@ -119,6 +119,8 @@ void swapk_pico_yield_until(absolute_time_t time)
 {
 	swapk_wait(&_swapk_pico_scheduler,
 		   _swapk_pico_get_timespec(time));
+	__dsb();
+	__isb();
 }
 
 void swapk_pico_notify(lock_core_t *lock_core, uint32_t save)

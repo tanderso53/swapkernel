@@ -133,21 +133,20 @@ isr_irq14:
 	mov	r11, r7
 	pop	{r4-r7}
 	pop	{r3}
+	mov	lr, r3
 	mrs	r0, msp
 	msr	psp, r0 /* New stack pointer for next */
 	msr	msp, r1 /* Restore main stack pointer */
 	isb
-	bl	swapk_svc_enable
+	/* bl	swapk_svc_enable */
+	push	{r0, r1, lr}
+	ldr	r0, =scheduler_ptr
+	ldr	r0, [r0]
+	ldr	r1, =_swapk_scheduler_available
+	blx	r1
 	cpsie	i
-	b	.isr_irq14_exit
-.isr_irq14_unpend:
-	push	{r0}
-	ldr	r0, =.isr_irq14_exit
-	mov	lr, r0
-	pop	{r0}
-	b	swapk_unset_pending
 .isr_irq14_exit:
-	bx	r3 /* Branch to unstacking */
+	pop	{r0, r1, pc} /* Branch to unstacking */
 	
 
 	@ swapk_set_pending()
@@ -171,6 +170,7 @@ swapk_unset_pending:
 	/* orrs	r1, r1, r2 */
 	str	r2, [r0]
 	pop	{r0-r2}
+	dsb
 	bx	lr
 
 	.global swapk_svc_pend
