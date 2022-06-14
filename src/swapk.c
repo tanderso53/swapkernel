@@ -608,7 +608,7 @@ bool _swapk_maybe_switch_context(swapk_scheduler_t *sch)
 	if (next && next->ready && next->core_affinity != (-1 * (cid + 1))) {
 		sch->current[cid] = next;
 		sch->context_shift[cid] = false;
-		/* swapk_call_scheduler_available(sch); */
+		swapk_call_scheduler_available(sch);
 		_swapk_proc_swap(sch, current, next);
 
 		return true;

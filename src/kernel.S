@@ -138,15 +138,16 @@ isr_irq14:
 	msr	psp, r0 /* New stack pointer for next */
 	msr	msp, r1 /* Restore main stack pointer */
 	isb
-	/* bl	swapk_svc_enable */
-	push	{r0, r1, lr}
-	ldr	r0, =scheduler_ptr
-	ldr	r0, [r0]
-	ldr	r1, =_swapk_scheduler_available
-	blx	r1
+	push	{lr}
+	bl	swapk_svc_enable
+	/* push	{r0, r1, lr} */
+	/* ldr	r0, =scheduler_ptr */
+	/* ldr	r0, [r0] */
+	/* ldr	r1, =_swapk_scheduler_available */
+	/* blx	r1 */
 	cpsie	i
 .isr_irq14_exit:
-	pop	{r0, r1, pc} /* Branch to unstacking */
+	pop	{pc} /* Branch to unstacking */
 	
 
 	@ swapk_set_pending()
