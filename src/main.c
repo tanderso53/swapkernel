@@ -1,10 +1,9 @@
 #include "swapk-pico-integration.h"
 
 #include "pico/stdlib.h"
+#include "pico/sync.h"
 #include "hardware/sync.h"
 #include "hardware/exception.h"
-/* #include "core_cm0plus.h" */
-/* #include "RP2040.h" */
 
 #include <stdio.h>
 #include <string.h>
@@ -18,17 +17,22 @@ SWAPK_DEFINE_STACK(stackb, SWAPK_STACK_SIZE_B);
 
 static swapk_proc_t proca;
 static swapk_proc_t procb;
+static semaphore_t app_setup_sem;
 
 static void *proca_entry(void*);
 static void *procb_entry(void*);
 
 void *proca_entry(void *arg)
 {
+	/* Start Setup */
 	stdio_usb_init();
 
 	while(!stdio_usb_connected()) {
 		tight_loop_contents();
 	}
+
+	sem_release(&app_setup_sem);
+	/* End setup */
 
 	printf("You are connected!\n");
 
@@ -41,17 +45,26 @@ void *proca_entry(void *arg)
 
 void *procb_entry(void *arg)
 {
-	printf("Hello World from Proc B on core %d!\n",
-		       swapk_pico_scheduler()->cb_list->core_get_id());
-	sleep_ms(18000);
+	int cnt = 5;
 
-	printf("Proc B is ending!!!!\n");
+	sem_acquire_blocking(&app_setup_sem);
+	sem_release(&app_setup_sem);
+
+	while(cnt-- > 0) {
+		printf("Hello World from Proc B on core %d!\n",
+		       swapk_pico_scheduler()->cb_list->core_get_id());
+		sleep_ms(18000);
+	}
+
+	printf("Proc B is ending on core %d!!!!\n",
+	       swapk_pico_scheduler()->cb_list->core_get_id());
 
 	return arg;
 }
 
 int main()
 {
+	sem_init(&app_setup_sem, 0, 1); /* For setup functions in proca */
 	swapk_pico_init();
 	swapk_pico_proc_init(&proca, &stacka, proca_entry, 2);
 	swapk_pico_proc_init(&procb, &stackb, procb_entry, 3);

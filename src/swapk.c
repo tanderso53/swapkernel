@@ -15,10 +15,10 @@
 *                         Assembly Functions                         *
 *                                                                    *
 **********************************************************************
- */
-extern void *_swapk_next;
-extern void *_swapk_current;
-extern void *scheduler_ptr;
+*/
+
+void *_swapk_isr_arg = NULL;
+extern void *scheduler_ptr[SWAPK_HARDWARE_THREADS];
 extern void swapk_register_proc(void *entry, void *stack, void *end,
 				void *arg);
 extern void swapk_startup(void *systemsp, swapk_entry entry,
@@ -27,6 +27,7 @@ extern void swapk_set_pending();
 extern void swapk_svc_enable();
 extern void swapk_svc_disable();
 extern void swapk_svc_pend();
+extern void swapk_pendsv_swap(void **current, void **next);
 
 /*
 **********************************************************************
@@ -38,6 +39,7 @@ extern void swapk_svc_pend();
 
 struct timespec swapk_empty_time = {0};
 struct timespec swapk_full_time = {.tv_nsec = (long)-1, .tv_sec = (time_t)-1};
+static swapk_callbacks_t *_swapk_cbptr = NULL;
 
 static int _swapk_proc_compare(swapk_proc_t *proca,
 			       swapk_proc_t *procb);
@@ -427,6 +429,12 @@ void *_swapk_system_entry(void* arg)
 				swapk_event_clear(&sch->events[i],
 						  SWAPK_SYSTEM_EVENT_SCH_AVAILABLE);
 			}
+
+			/* Currently only an SVC call can disable, so
+			 * we need to do this to make sure the
+			 * scheduler isn't interrupted before
+			 * pendsv */
+			swapk_svc_disable();
 		}
 	}
 
@@ -438,32 +446,36 @@ void _swapk_end_proc(void *arg)
 	swapk_scheduler_t *sch = (swapk_scheduler_t*) arg;
 	SWAPK_CORE_ID_T cid = sch->cb_list->core_get_id();
 	swapk_proc_t *current = sch->current[cid];
-	swapk_proc_t *next;
+	/* swapk_proc_t *next; */
 
 	current->ready = false;
-	next = &sch->_system_proc;
-	sch->context_shift[cid] = true;
-	sch->current[cid] = NULL;
+	/* next = &sch->_system_proc; */
+	/* sch->context_shift[cid] = true; */
+	/* sch->current[cid] = NULL; */
 
 	/* Switch to system proc */
-	_swapk_proc_swap(sch, current, next);
+	/* _swapk_proc_swap(sch, current, next); */
 
 	/* We shouldn't get here */
 	for (;;) {
 		swapk_yield(sch);
-		sch->cb_list->poll_event(arg);
+		sch->current[sch->cb_list->core_get_id()]->ready = false;
+		/* sch->cb_list->poll_event(arg); */
 	}
 }
 
 void _swapk_proc_swap(swapk_scheduler_t *sch, swapk_proc_t *current,
 		      swapk_proc_t *next)
 {
+	SWAPK_CORE_ID_T cid = sch->cb_list->core_get_id();
+
 	if (current == next)
 		return;
 
-	_swapk_current = &current->stack->stackptr;
-	_swapk_next = &next->stack->stackptr;
-	scheduler_ptr = sch;
+	sch->_current[cid] = current;
+	sch->_next[cid] = next;
+	scheduler_ptr[cid] = sch;
+	_swapk_cbptr = sch->cb_list;
 	swapk_set_pending();
 }
 
@@ -492,13 +504,13 @@ void *_swapk_core_launch(void* arg)
 {
 	swapk_scheduler_t *sch = (swapk_scheduler_t*) arg;
 	SWAPK_CORE_ID_T cid = sch->cb_list->core_get_id();
+	swapk_proc_t *proc = &sch->_sleep_proc[cid];
 
 	/* Extra hardware threads will start with a sleep task and
 	 * will wake up when the scheduler tells them to */
-	sch->current[cid] = &sch->_sleep_proc[cid];
-	sch->current[cid]->core_id = cid;
-	swapk_startup(sch->_sleep_stack->stackptr,
-		      sch->_sleep_proc[cid].entry, sch);
+	sch->current[cid] = proc;
+	proc->core_id = cid;
+	swapk_startup(proc->stack->stackptr, proc->entry, sch);
 
 	return arg;
 }
@@ -516,7 +528,7 @@ void _swapk_svc_handler(swapk_scheduler_t *sch)
 
 void isr_irq11()
 {
-	_swapk_svc_handler(scheduler_ptr);
+	_swapk_svc_handler(scheduler_ptr[_swapk_cbptr->core_get_id()]);
 }
 
 void isr_irq8()
@@ -529,7 +541,7 @@ void isr_irq9()
 
 void _swapk_call_common(swapk_scheduler_t *sch, swapk_system_call call)
 {
-	scheduler_ptr = sch;
+	scheduler_ptr[sch->cb_list->core_get_id()] = sch;
 	sch->_call_calling_pid = swapk_proc_get_pid(sch);
 	sch->_call_complete = false;
 	sch->_call_result = 0;
@@ -638,7 +650,7 @@ void _swapk_wait_for_scheduler(swapk_scheduler_t *sch)
 {
 	SWAPK_CORE_ID_T cid = sch->cb_list->core_get_id();
 
-	while (swapk_event_check(&sch->events[cid],
+	while (!swapk_event_check(&sch->events[cid],
 				 SWAPK_SYSTEM_EVENT_SCH_AVAILABLE)) {
 		sch->cb_list->poll_event(sch);
 	}
@@ -685,4 +697,14 @@ void _swapk_insert_sorted_forward(struct swapk_proc_queue *q,
 		if (!TAILQ_NEXT(elem, _tailq_entry))
 			TAILQ_INSERT_TAIL(q, proc, _tailq_entry);
 	}
+}
+
+/** @todo This will only work on rp2040: fix that */
+void isr_irq14()
+{
+	SWAPK_CORE_ID_T cid = _swapk_cbptr->core_get_id();
+	swapk_scheduler_t *sch = scheduler_ptr[cid];
+
+	swapk_pendsv_swap(&sch->_current[cid]->stack->stackptr,
+			  &sch->_next[cid]->stack->stackptr);
 }

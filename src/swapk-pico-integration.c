@@ -74,6 +74,8 @@ void swapk_pico_init() {
 	cbs->signal_event = _swapk_pico_cb_signal_event;
 
 	_swapk_pico_lock_map_cntr = 0;
+	TAILQ_INIT(&_swapk_pico_lock_maps);
+	TAILQ_INIT(&_swapk_pico_lock_maps_free);
 
 	/* Add all lock maps to the free queue so we can find them
 	 * when we need them */
@@ -242,13 +244,17 @@ void _swapk_pico_set_alarm(SWAPK_ABSOLUTE_TIME_T time,
 static struct timespec _swapk_pico_get_timespec(absolute_time_t time)
 {
 	struct timespec ts;
-	uint64_t us = to_us_since_boot(time);
 
-	if (us < to_us_since_boot(get_absolute_time()))
-	    us = 0;
-
-	ts.tv_sec = us / 1000000;
-	ts.tv_nsec = (us % 1000000) * 1000;
+	if (is_nil_time(time)) {
+		ts = SWAPK_NOWAIT;
+	}
+	else if (!absolute_time_diff_us(time, at_the_end_of_time)) {
+		ts = SWAPK_FOREVER;
+	} else {
+		uint64_t us = to_us_since_boot(time);
+		ts.tv_sec = us / 1000000;
+		ts.tv_nsec = (us % 1000000) * 1000;
+	}
 
 	return ts;
 }
@@ -315,7 +321,18 @@ void _swapk_pico_cb_sem_sch_set_permits(int permits)
 
 bool _swapk_pico_cb_sem_sch_take_non_blocking()
 {
-	return (sem_acquire_timeout_ms(&_swapk_pico_sch_sem, 0));
+	/**
+	 * @todo another process could possibly take the semaphore
+	 * between checking it is available and grabbing it. This may
+	 * need to be resolved
+	 */
+	if (!sem_available(&_swapk_pico_sch_sem)) {
+		return false;
+	}
+
+	sem_acquire_blocking(&_swapk_pico_sch_sem);
+
+	return true;
 }
 
 void _swapk_pico_cb_sem_sch_take_blocking()
@@ -327,4 +344,3 @@ void _swapk_pico_cb_sem_sch_give()
 {
 	sem_release(&_swapk_pico_sch_sem);
 }
-

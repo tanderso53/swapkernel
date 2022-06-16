@@ -13,10 +13,10 @@
 
 #define lock_is_owner_id_valid(id) ((id) != LOCK_INVALID_OWNER_ID)
 
-#define lock_internal_spin_unlock_with_wait(lock, save)		\
-	do {							\
-		spin_unlock((lock)->spin_lock, save);		\
-		swapk_pico_wait(nil_time, lock, save);		\
+#define lock_internal_spin_unlock_with_wait(lock, save)			\
+	do {								\
+		spin_unlock((lock)->spin_lock, save);			\
+		swapk_pico_wait(at_the_end_of_time, lock, save);	\
 	} while (0);
 
 #define lock_internal_spin_unlock_with_notify(lock, save)	\

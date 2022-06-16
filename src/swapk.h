@@ -22,7 +22,7 @@
 #endif
 
 #ifndef SWAPK_SLEEP_STACK_SIZE
-#define SWAPK_SLEEP_STACK_SIZE (4 * 32)
+#define SWAPK_SLEEP_STACK_SIZE (4 * 1024)
 #endif
 
 #ifndef SWAPK_SYSTEM_PROC_PRIORITY
@@ -185,6 +185,8 @@ typedef struct {
 	int _call_result;
 	bool _call_complete;
 	pid_t _call_calling_pid;
+	swapk_proc_t *_current[SWAPK_HARDWARE_THREADS];
+	swapk_proc_t *_next[SWAPK_HARDWARE_THREADS];
 } swapk_scheduler_t;
 
 void swapk_scheduler_init(swapk_scheduler_t *sch,
