@@ -14,15 +14,16 @@
 	.data
 	.global scheduler_ptr
 scheduler_ptr:	.word 0
-	.global _swapk_next
+	.weak _swapk_next
 _swapk_next:	.word 0
-	.global _swapk_current
+	.weak _swapk_current
 _swapk_current:	.word 0
 
 	.text
 scb_vtor:	.word SCB_VTOR
 vaddr_pendsv:	.word VADDR_PENDSV
 nvic_iser:	.word NVIC_ISER
+nvic_icer:	.word NVIC_ICER
 nvic_ispr:	.word NVIC_ISPR
 nvic_icpr:	.word NVIC_ICPR
 return_psp:	.word 0xfffffffd
@@ -76,55 +77,65 @@ swapk_startup:
 	mov	r12, r7
 	pop	{r3-r7, pc} /* Branch to calling func */
 
-	.global isr_irq14
+	.global swapk_svc_enable
 	.thumb_func
-	.type isr_irq14, function
-isr_irq14:
+	.type swapk_svc_enable, function
+swapk_svc_enable:
+	push	{r0-r1, lr}
+	ldr	r0, =nvic_iser
+	b	.swapk_svc_set_reg
+
+	.global swapk_svc_disable
+	.thumb_func
+	.type swapk_svc_disable, function
+swapk_svc_disable:
+	push	{r0-r1, lr}
+	ldr	r0, =nvic_icer
+.swapk_svc_set_reg:
+	ldr	r0, [r0]
+	movs	r1, #1
+	lsls	r1, r1, #11 /* SVC is exception 11 */
+	str	r1, [r0]
+	pop	{r0-r1, pc}
+
+	/* void swapk_pendsv_swap(void **current, void **next) */
+	.global swapk_pendsv_swap
+	.thumb_func
+	.type swapk_pendsv_swap, function
+swapk_pendsv_swap:
 	cpsid	i
-	mrs	r0, psp /* We need this to get back home */
-	mrs	r1, msp
-	msr	msp, r0
-	isb
-	push	{r4-r7, lr} /* Save regs */
+	push	{r2-r3, lr}
+/* Store the current regs */
+	mrs	r2, psp /* We need this to get back home */
+	mov	r3, sp
+	mov	sp, r2
+	push	{r4-r7} /* Save regs */
 	mov	r4, r8
 	mov	r5, r9
 	mov	r6, r10
 	mov	r7, r11
 	push	{r4-r7}
-	mrs	r0, msp /* Return to msp */
-	msr	msp, r1
-	isb
-	ldr	r1, =_swapk_current /* This needs to be pre-loaded */
-	ldr	r1, [r1]
-	str	r0, [r1] /* Store old stack pointer */
-.isr_irq14_load:
-	ldr	r0, =_swapk_next /* Pre-load! */
-	ldr	r0, [r0]
-	ldr	r0, [r0] /* Pointer of a pointer to SP next */
-	mrs	r1, msp
-	msr	msp, r0
-	isb
+	mov	r2, sp /* Return to msp */
+	mov	sp, r3
+	str	r2, [r0] /* Store old stack pointer */
+/* Load the next regs */
+	ldr	r1, [r1] /* Pointer of a pointer to SP next */
+	mov	r3, sp
+	mov	sp, r1
 	pop	{r4-r7} /* Reload ISR stack */
 	mov	r8, r4
 	mov	r9, r5
 	mov	r10, r6
 	mov	r11, r7
 	pop	{r4-r7}
-	pop	{r3}
-	mrs	r0, msp
-	msr	psp, r0 /* New stack pointer for next */
-	msr	msp, r1 /* Restore main stack pointer */
+	mov	r1, sp
+	msr	psp, r1 /* New stack pointer for next */
+	msr	msp, r3 /* Restore main stack pointer */
 	isb
+	bl	swapk_svc_enable /* Allow SVC if one is pending */
+/* All done! Let's exit. */
 	cpsie	i
-	b	.isr_irq14_exit
-.isr_irq14_unpend:
-	push	{r0}
-	ldr	r0, =.isr_irq14_exit
-	mov	lr, r0
-	pop	{r0}
-	b	swapk_unset_pending
-.isr_irq14_exit:
-	bx	r3 /* Branch to unstacking */
+	pop	{r2-r3, pc} /* Branch to return */
 
 	@ swapk_set_pending()
 	@
@@ -147,7 +158,20 @@ swapk_unset_pending:
 	/* orrs	r1, r1, r2 */
 	str	r2, [r0]
 	pop	{r0-r2}
+	dsb
 	bx	lr
+
+	.global swapk_svc_pend
+	.thumb_func
+	.type swapk_svc_pend, function
+swapk_svc_pend:
+	push	{r0-r1, lr}
+	ldr	r0, =nvic_ispr
+	ldr	r0, [r0]
+	movs	r1, #1
+	lsls	r1, r1, #11 /* SVC is exception 11 */
+	str	r1, [r0]
+	pop	{r0-r1, pc}
 
 	/*
 	 * void swapk_register_proc(void *entry, void *stack,
@@ -176,9 +200,6 @@ swapk_register_proc:
 	movs	r6, #0
 	movs	r7, #0
 	push	{r4-r7} /* Last 4 ISR Stack frame */
-	ldr	r4, =return_psp
-	ldr	r4, [r4]
-	push	{r4} /* ISR LR */
 	movs	r4, #0
 	movs	r5, #0
 	movs	r6, #0
@@ -197,3 +218,23 @@ swapk_register_proc:
 	mov	r8, r4
 	pop	{r4-r7}
 	bx	lr
+
+	/* void swapk_isr_arg(int argc [r0], void **argv [r1],
+	 *                    void *ptr [r2]) */
+	.global swapk_isr_arg
+	.type swapk_isr_arg, function
+	.thumb_func
+swapk_isr_arg:
+	push	{r3, lr}
+.swapk_isr_arg_loop:
+	cmp	r0, #0
+	beq	.swapk_isr_arg_exit
+	ldr	r3, [r1]
+	push	{r3}
+	subs	r0, #1
+	adds	r1, #4
+	b	.swapk_isr_arg_loop
+.swapk_isr_arg_exit:
+	mov	r0, sp
+	str	r0, [r2]
+	pop	{r3, pc}
