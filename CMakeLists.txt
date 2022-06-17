@@ -1,41 +1,37 @@
 cmake_minimum_required(VERSION 3.22)
 
-# Add environment variables
-include($ENV{PICO_SDK_PATH}/pico_sdk_init.cmake)
-set(PICO_TOOLCHAIN_PATH $ENV{PICO_TOOLCHAIN_PATH})
+option(SWAPK_EXAMPLES_ENABLE "Enable example libs and applications"
+  off)
+option(SWAPK_EXAMPLES_BUILD_APPS "Build example applications"
+  off)
+option(SWAPK_EXAMPLES_LIB_PICO "Build pico SDK integration"
+  on)
 
+if(SWAPK_EXAMPLES_LIB_PICO)
+  # Add environment variables
+  include($ENV{PICO_SDK_PATH}/pico_sdk_init.cmake)
+  set(PICO_TOOLCHAIN_PATH $ENV{PICO_TOOLCHAIN_PATH})
+endif()
 
-# Change the below information to match the project
-# you wish to build
 project(swapkernel)
-pico_sdk_init()
+
+if(SWAPK_EXAMPLES_LIB_PICO)
+  pico_sdk_init()
+endif()
+
+if(SWAPK_EXAMPLES_ENABLE)
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/examples)
+endif()
 
 ################################
 # Main air-quality MCU program #
 ################################
 
-add_executable(${PROJECT_NAME})
+add_library(${PROJECT_NAME} INTERFACE)
 
-target_sources(${PROJECT_NAME} PRIVATE
-  ${CMAKE_CURRENT_LIST_DIR}/src/main.c
+target_sources(${PROJECT_NAME} INTERFACE
   ${CMAKE_CURRENT_LIST_DIR}/src/kernel.S
-  ${CMAKE_CURRENT_LIST_DIR}/src/swapk.c
-  ${CMAKE_CURRENT_LIST_DIR}/src/swapk-pico-integration.c
-  ${CMAKE_CURRENT_LIST_DIR}/src/swapk-pico-isr.S)
+  ${CMAKE_CURRENT_LIST_DIR}/src/swapk.c)
 
-pico_enable_stdio_usb(${PROJECT_NAME} 1)
-pico_enable_stdio_uart(${PROJECT_NAME} 1)
-
-target_link_libraries(${PROJECT_NAME}
-  pico_stdlib pico_multicore pico_util
-  hardware_exception pico_runtime)
-
-target_compile_definitions(${PROJECT_NAME} PUBLIC
-  PICO_TIME_DEFAULT_ALARM_POOL_DISABLED=1
-  SWAPK_HARDWARE_THREADS=2)
-
-target_include_directories(pico_sync_core INTERFACE
-  ${CMAKE_CURRENT_LIST_DIR}/src)
-
-# Need this to get our .uf2
-pico_add_extra_outputs(${PROJECT_NAME})
+target_include_directories(${PROJECT_NAME} INTERFACE
+  ${CMAKE_CURRENT_LIST_DIR}/include)
