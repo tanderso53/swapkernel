@@ -41,7 +41,7 @@ struct timespec swapk_empty_time = {0};
 struct timespec swapk_full_time = {.tv_nsec = (long)-1, .tv_sec = (time_t)-1};
 static swapk_callbacks_t *_swapk_cbptr = NULL;
 
-static int _swapk_proc_compare(swapk_proc_t *proca,
+static int _swapk_proc_compare(swapk_scheduler_t *sch, swapk_proc_t *proca,
 			       swapk_proc_t *procb);
 
 static bool _swapk_is_proc_ready(swapk_scheduler_t *sch);
@@ -76,8 +76,12 @@ static bool _swapk_is_swapk_forever(SWAPK_ABSOLUTE_TIME_T time);
 
 static bool _swapk_is_swapk_nowait(SWAPK_ABSOLUTE_TIME_T time);
 
-static void _swapk_insert_sorted_forward(struct swapk_proc_queue *q,
+static void _swapk_insert_sorted_forward(swapk_scheduler_t *sch,
+					 struct swapk_proc_queue *q,
 					 swapk_proc_t *proc);
+
+static bool _swapk_check_core_affinity(swapk_scheduler_t *sch,
+				       swapk_proc_t *proc);
 
 /*
 **********************************************************************
@@ -182,7 +186,7 @@ swapk_proc_t *swapk_pop_proc(swapk_scheduler_t *sch)
 swapk_proc_t *swapk_push_proc(swapk_scheduler_t *sch,
 			      swapk_proc_t *proc)
 {
-	_swapk_insert_sorted_forward(&sch->procqueue, proc);
+	_swapk_insert_sorted_forward(sch, &sch->procqueue, proc);
 
 	return proc;
 }
@@ -382,7 +386,7 @@ void swapk_scheduler_sort(swapk_scheduler_t *sch)
 
 	TAILQ_FOREACH_SAFE(elem, q, _tailq_entry, etemp) {
 		TAILQ_REMOVE(q, elem, _tailq_entry);
-		_swapk_insert_sorted_forward(&tq, elem);
+		_swapk_insert_sorted_forward(sch, &tq, elem);
 	}
 
 	/* Swap over the sorted queue to the scheduler queue */
@@ -397,28 +401,51 @@ void swapk_scheduler_sort(swapk_scheduler_t *sch)
 **********************************************************************
 */
 
-int _swapk_proc_compare(swapk_proc_t *proca, swapk_proc_t *procb)
+int _swapk_proc_compare(swapk_scheduler_t *sch, swapk_proc_t *proca,
+			swapk_proc_t *procb)
 {
+	int order = 0;
+	const int nptr = 0x10;
+	const int rea = 0x04;
+	const int pri = 0x02;
+	const int aff = 0x01;
+	SWAPK_CORE_ID_T cid = sch->cb_list->core_get_id();
+
 	/* If procb belongs right of proca, > 1, 0 if belong in same
 	 * place, < 1 if proca belongs right of procb */
-	if (!procb) {
-		return 1;
-	}
+	if (!procb)
+		order += nptr;
 
 	if (!proca) {
-		return -1;
+		order -= nptr;
 	}
 
-	if (proca->priority == procb->priority
-	    && proca->ready == procb->ready) {
-		return 0;
-	}
+	if (order >= nptr || order <= -1 * nptr)
+		return order; /* Return early so we don't index nulls */
 
-	if (proca->ready == procb->ready) {
-		return proca->priority < procb->priority ? 1 : -1;
-	}
+	/* Priority */
+	if (proca->priority < procb->priority)
+		order += pri;
+	else if (proca->priority > procb->priority)
+		order -= pri;
 
-	return proca->ready ? 1 : -1;
+	/* Ready */
+	if (proca->ready)
+		order += rea;
+
+	if (procb->ready)
+		order -= rea;
+
+	/* Core affinity */
+	if (proca->core_affinity == cid + 1 ||
+	    proca->core_affinity == -1 * (cid + 1))
+		order += aff;
+
+	if (procb->core_affinity == cid + 1 ||
+	    procb->core_affinity == -1 * (cid + 1))
+		order -= aff;
+
+	return order;
 }
 
 bool _swapk_is_proc_ready(swapk_scheduler_t *sch)
@@ -603,16 +630,6 @@ int _swapk_scheduler_available(void *arg)
 	return _swapk_call_scheduler_available(2, argv);
 }
 
-int _swapk_call_enter_scheduler(int argc, void **argv)
-{
-	swapk_scheduler_t *sch = (swapk_scheduler_t*) argv[1];
-	swapk_proc_t *current = argv[2];
-
-	sch->cb_list->sem_sch_take_non_blocking();
-
-	return 0;
-}
-
 bool _swapk_maybe_switch_context(swapk_scheduler_t *sch)
 {
 	swapk_proc_t *current;
@@ -633,7 +650,7 @@ bool _swapk_maybe_switch_context(swapk_scheduler_t *sch)
 
 	/* No longer need to handle switching to scheduler, as this
 	 * func is only called from scheduler */
-	if (next && next->ready && next->core_affinity != (-1 * (cid + 1))) {
+	if (next && next->ready && _swapk_check_core_affinity(sch, next)) {
 		sch->context_shift[cid] = false;
 		swapk_event_clear(&sch->events[cid],
 				  SWAPK_SYSTEM_EVENT_CONTEXT_SWITCH);
@@ -687,7 +704,8 @@ bool _swapk_is_swapk_nowait(SWAPK_ABSOLUTE_TIME_T time)
 	/* 	time.tv_sec == SWAPK_NOWAIT.tv_sec; */
 }
 
-void _swapk_insert_sorted_forward(struct swapk_proc_queue *q,
+void _swapk_insert_sorted_forward(swapk_scheduler_t *sch,
+				  struct swapk_proc_queue *q,
 				  swapk_proc_t *proc)
 {
 	swapk_proc_t *elem, *tempelem;
@@ -705,7 +723,7 @@ void _swapk_insert_sorted_forward(struct swapk_proc_queue *q,
 			return;
 
 	TAILQ_FOREACH_SAFE(elem, q, _tailq_entry, tempelem) {
-		if (_swapk_proc_compare(elem, proc) < 0) {
+		if (_swapk_proc_compare(sch, elem, proc) < 0) {
 			TAILQ_INSERT_BEFORE(elem, proc, _tailq_entry);
 			break;
 		}
@@ -714,6 +732,17 @@ void _swapk_insert_sorted_forward(struct swapk_proc_queue *q,
 		if (!TAILQ_NEXT(elem, _tailq_entry))
 			TAILQ_INSERT_TAIL(q, proc, _tailq_entry);
 	}
+}
+
+bool _swapk_check_core_affinity(swapk_scheduler_t *sch, swapk_proc_t *proc)
+{
+	SWAPK_CORE_ID_T cid = sch->cb_list->core_get_id();
+
+	/* Core affinity is only asserted if negative */
+	if (proc->core_affinity < 0)
+		return proc->core_affinity == -1 * (cid + 1);
+
+	return true;
 }
 
 /** @todo This will only work on rp2040: fix that */
@@ -728,6 +757,10 @@ void isr_irq14()
 	sch->current[cid] = sch->_next[cid] == &sch->_system_proc
 		? NULL
 		: sch->_next[cid];
+
+	/* Update process data to show which core they are on */
+	sch->_current[cid]->core_id = -1; /* Meaning not on core */
+	sch->_next[cid]->core_id = cid;
 
 	swapk_pendsv_swap(&sch->_current[cid]->stack->stackptr,
 			  &sch->_next[cid]->stack->stackptr);
