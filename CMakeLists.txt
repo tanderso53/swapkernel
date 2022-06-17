@@ -9,7 +9,7 @@ option(SWAPK_EXAMPLES_LIB_PICO "Build pico SDK integration"
 
 if(SWAPK_EXAMPLES_LIB_PICO)
   # Add environment variables
-  include(${CMAKE_CURRENT_LIST_DIR}/lib/pico_sdk_init.cmake)
+  include(${CMAKE_CURRENT_LIST_DIR}/lib/pico-sdk/pico_sdk_init.cmake)
   set(PICO_TOOLCHAIN_PATH $ENV{PICO_TOOLCHAIN_PATH})
 endif()
 
