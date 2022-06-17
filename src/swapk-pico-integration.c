@@ -199,16 +199,16 @@ swapk_pico_lock_map_t *_swapk_pico_find_free_lock_map()
 
 swapk_pico_lock_map_t *_swapk_pico_free_lock_map(swapk_pico_lock_map_t *lock_map)
 {
-	swapk_pico_lock_map_t *elem;
+	/* swapk_pico_lock_map_t *elem; */
 	struct _swapk_pico_lock_queue *used, *free;
 
 	used = &_swapk_pico_lock_maps;
 	free = &_swapk_pico_lock_maps_free;
 
 	/* First check that the map is used */
-	TAILQ_FOREACH(elem, used, _tailq)
-		if (elem == lock_map)
-			return NULL; /* NULL if not added to free */
+	/* TAILQ_FOREACH(elem, used, _tailq) */
+		/* if (elem == lock_map) */
+			/* return NULL; /\* NULL if not added to free *\/ */
 
 	/* Remove from used and add to end of free */
 	TAILQ_REMOVE(used, lock_map, _tailq);

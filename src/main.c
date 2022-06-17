@@ -8,23 +8,25 @@
 #include <stdio.h>
 #include <string.h>
 
-#define SWAPK_KERNEL_STACK_SIZE (4*1024)
+#define SWAPK_STACK_SIZE_SETUP 1024
 #define SWAPK_STACK_SIZE_A (4 * 2048)
 #define SWAPK_STACK_SIZE_B (4 * 2048)
 
+SWAPK_DEFINE_STACK(stacksetup, SWAPK_STACK_SIZE_SETUP);
 SWAPK_DEFINE_STACK(stacka, SWAPK_STACK_SIZE_A);
 SWAPK_DEFINE_STACK(stackb, SWAPK_STACK_SIZE_B);
 
+static swapk_proc_t procsetup;
 static swapk_proc_t proca;
 static swapk_proc_t procb;
 static semaphore_t app_setup_sem;
 
+static void *setup_entry(void*);
 static void *proca_entry(void*);
 static void *procb_entry(void*);
 
-void *proca_entry(void *arg)
+void *setup_entry(void *arg)
 {
-	/* Start Setup */
 	stdio_usb_init();
 
 	while(!stdio_usb_connected()) {
@@ -32,9 +34,15 @@ void *proca_entry(void *arg)
 	}
 
 	sem_release(&app_setup_sem);
-	/* End setup */
-
 	printf("You are connected!\n");
+
+	return arg;
+}
+
+void *proca_entry(void *arg)
+{
+	sem_acquire_blocking(&app_setup_sem);
+	sem_release(&app_setup_sem);
 
 	for (;;) {
 		printf("Hello World from Proc A on core %d!\n",
@@ -66,6 +74,7 @@ int main()
 {
 	sem_init(&app_setup_sem, 0, 1); /* For setup functions in proca */
 	swapk_pico_init();
+	swapk_pico_proc_init(&procsetup, &stacksetup, setup_entry, -10);
 	swapk_pico_proc_init(&proca, &stacka, proca_entry, 2);
 	swapk_pico_proc_init(&procb, &stackb, procb_entry, 3);
 	swapk_pico_start();
