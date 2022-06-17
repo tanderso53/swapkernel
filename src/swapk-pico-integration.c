@@ -159,15 +159,13 @@ void swapk_pico_notify(lock_core_t *lock_core, uint32_t save)
 		}
 	}
 
-	spin_unlock(lock_core->spin_lock, save);
-
 	/* Don't preempt if the lock was never registered in the first
 	 * place */
 	if (!lock_map)
 		return;
 
-	__sev();
-	swapk_notify_pid(&_swapk_pico_scheduler, pid);
+	if (&_swapk_pico_sch_sem.core != lock_core)
+		swapk_notify_pid(&_swapk_pico_scheduler, pid);
 }
 
 lock_owner_id_t swapk_pico_get_current_pid()
@@ -321,18 +319,8 @@ void _swapk_pico_cb_sem_sch_set_permits(int permits)
 
 bool _swapk_pico_cb_sem_sch_take_non_blocking()
 {
-	/**
-	 * @todo another process could possibly take the semaphore
-	 * between checking it is available and grabbing it. This may
-	 * need to be resolved
-	 */
-	if (!sem_available(&_swapk_pico_sch_sem)) {
-		return false;
-	}
-
-	sem_acquire_blocking(&_swapk_pico_sch_sem);
-
-	return true;
+	return sem_acquire_block_until(&_swapk_pico_sch_sem,
+				       _swapk_pico_get_absolute_time(SWAPK_NOWAIT));
 }
 
 void _swapk_pico_cb_sem_sch_take_blocking()

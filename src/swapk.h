@@ -61,6 +61,7 @@
 /* System events */
 #define SWAPK_SYSTEM_EVENT_CONTEXT_SWITCH	0x00000001
 #define SWAPK_SYSTEM_EVENT_SCH_AVAILABLE	0x00000002
+#define SWAPK_SYSTEM_EVENT_PREEMPT_DISABLED	0x00000004
 
 /**
  * @defgroup swapk_proc Swapkernel Process API
@@ -187,6 +188,7 @@ typedef struct {
 	pid_t _call_calling_pid;
 	swapk_proc_t *_current[SWAPK_HARDWARE_THREADS];
 	swapk_proc_t *_next[SWAPK_HARDWARE_THREADS];
+	swapk_proc_t *_last[SWAPK_HARDWARE_THREADS];
 } swapk_scheduler_t;
 
 void swapk_scheduler_init(swapk_scheduler_t *sch,

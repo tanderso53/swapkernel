@@ -118,6 +118,9 @@ void swapk_scheduler_init(swapk_scheduler_t *sch,
 	for (SWAPK_CORE_ID_T i = 0; i < SWAPK_HARDWARE_THREADS; ++i) {
 		sch->context_shift[i] = true;
 		sch->current[i] = NULL;
+		sch->_current[i] = NULL;
+		sch->_next[i] = NULL;
+		sch->_last[i] = NULL;
 		swapk_event_init(&sch->events[i], 0);
 
 		/* Add the sleep processes */
@@ -187,10 +190,17 @@ swapk_proc_t *swapk_push_proc(swapk_scheduler_t *sch,
 swapk_proc_t *swapk_ready_proc(swapk_scheduler_t *sch,
 			       swapk_proc_t *proc)
 {
-	if (!proc)
+	if (!proc || proc->ready)
 		return NULL;
 
 	proc->ready = true;
+
+	for (SWAPK_CORE_ID_T i = 0; i < SWAPK_HARDWARE_THREADS; ++i) {
+		swapk_event_add(&sch->events[i],
+				SWAPK_SYSTEM_EVENT_CONTEXT_SWITCH);
+	}
+
+	sch->cb_list->signal_event(sch);
 
 	return proc;
 }
@@ -224,7 +234,11 @@ void swapk_wait(swapk_scheduler_t *sch, SWAPK_ABSOLUTE_TIME_T time)
 void swapk_wait_proc(swapk_scheduler_t *sch, SWAPK_ABSOLUTE_TIME_T time,
 		     swapk_proc_t *proc)
 {
-	proc->ready = false;
+	/* We don't want to remove the readiness of processes just
+	 * because they couldn't lock the scheduler */
+	if (!swapk_event_check(&sch->events[sch->cb_list->core_get_id()],
+			       SWAPK_SYSTEM_EVENT_PREEMPT_DISABLED))
+		proc->ready = false;
 
 	if (_swapk_is_swapk_nowait(time))
 		return;
@@ -246,7 +260,17 @@ void swapk_wait_pid(swapk_scheduler_t *sch, SWAPK_ABSOLUTE_TIME_T time,
 
 void swapk_notify(swapk_scheduler_t *sch, swapk_proc_t *wake_up_proc)
 {
-	swapk_ready_proc(sch, wake_up_proc);
+	SWAPK_CORE_ID_T cid = sch->cb_list->core_get_id();
+	if (!swapk_ready_proc(sch, wake_up_proc))
+		return;
+
+	/* Don't preempt if same process or on the way to the
+	 * scheduler */
+	if (wake_up_proc == sch->current[cid] ||
+	    swapk_event_check(&sch->events[cid],
+			      SWAPK_SYSTEM_EVENT_PREEMPT_DISABLED))
+		return;
+
 	swapk_preempt(sch);
 }
 
@@ -272,13 +296,15 @@ void swapk_yield(swapk_scheduler_t *sch)
 
 	swapk_proc_t *next = &sch->_system_proc;
 
-	/* Swap to system thread and signal need for context shift */
-	swapk_event_add(&sch->events[cid],
-			SWAPK_SYSTEM_EVENT_CONTEXT_SWITCH);
-
 	/* Do not allow a process to preempt itself */
 	if (current == next)
 		return;
+
+	/* Swap to system thread and signal need for context
+	 * shift. Entering needed to prevent notification loop */
+	swapk_event_add(&sch->events[cid],
+			SWAPK_SYSTEM_EVENT_CONTEXT_SWITCH |
+			SWAPK_SYSTEM_EVENT_PREEMPT_DISABLED);
 
 	/* If use the blocking version, we will just keep calling
 	 * swapk_yield() over and over again */
@@ -418,9 +444,9 @@ void *_swapk_system_entry(void* arg)
 	for (;;) {
 		cid = sch->cb_list->core_get_id();
 
-		if ((proc = sch->current[cid])) {
+		if ((proc = sch->_last[cid])) {
 			swapk_push_proc(sch, proc);
-			sch->current[cid] = NULL;
+			sch->_last[cid] = NULL;
 		}
 
 		if (_swapk_maybe_switch_context(sch)) {
@@ -553,9 +579,10 @@ int _swapk_call_scheduler_available(int argc, void **argv)
 {
 	(void) argc;
 	swapk_scheduler_t *sch = (swapk_scheduler_t*) argv[1];
+	SWAPK_CORE_ID_T cid = sch->cb_list->core_get_id();
 
 	for (SWAPK_CORE_ID_T i = 0; i < SWAPK_HARDWARE_THREADS; ++i) {
-		if (i != sch->cb_list->core_get_id()) {
+		if (i != cid) {
 			swapk_event_add(&sch->events[i],
 					SWAPK_SYSTEM_EVENT_SCH_AVAILABLE);
 		}
@@ -563,23 +590,25 @@ int _swapk_call_scheduler_available(int argc, void **argv)
 
 	sch->cb_list->sem_sch_give();
 	sch->cb_list->signal_event(sch);
+
+	swapk_event_clear(&sch->events[cid],
+			  SWAPK_SYSTEM_EVENT_PREEMPT_DISABLED);
 
 	return 0;
 }
 
 int _swapk_scheduler_available(void *arg)
 {
-	swapk_scheduler_t *sch = (swapk_scheduler_t*) arg;
+	void *argv[] = {_swapk_call_scheduler_available, arg};
+	return _swapk_call_scheduler_available(2, argv);
+}
 
-	for (SWAPK_CORE_ID_T i = 0; i < SWAPK_HARDWARE_THREADS; ++i) {
-		if (i != sch->cb_list->core_get_id()) {
-			swapk_event_add(&sch->events[i],
-					SWAPK_SYSTEM_EVENT_SCH_AVAILABLE);
-		}
-	}
+int _swapk_call_enter_scheduler(int argc, void **argv)
+{
+	swapk_scheduler_t *sch = (swapk_scheduler_t*) argv[1];
+	swapk_proc_t *current = argv[2];
 
-	sch->cb_list->sem_sch_give();
-	sch->cb_list->signal_event(sch);
+	sch->cb_list->sem_sch_take_non_blocking();
 
 	return 0;
 }
@@ -589,19 +618,6 @@ bool _swapk_maybe_switch_context(swapk_scheduler_t *sch)
 	swapk_proc_t *current;
 	swapk_proc_t *next;
 	SWAPK_CORE_ID_T cid = sch->cb_list->core_get_id();
-
-	/* Not all systems are using the event system yet, but the
-	 * notify/wait functions do, so we need to check for an event
-	 * AND check sch->context_shift */
-	if (swapk_event_check(&sch->events[cid],
-			      SWAPK_SYSTEM_EVENT_CONTEXT_SWITCH)) {
-		sch->context_shift[cid] = true;
-		swapk_event_clear(&sch->events[cid],
-				  SWAPK_SYSTEM_EVENT_CONTEXT_SWITCH);
-	}
-
-	if (!sch->context_shift[cid])
-		return false;
 
 	current = sch->current[cid];
 
@@ -618,8 +634,9 @@ bool _swapk_maybe_switch_context(swapk_scheduler_t *sch)
 	/* No longer need to handle switching to scheduler, as this
 	 * func is only called from scheduler */
 	if (next && next->ready && next->core_affinity != (-1 * (cid + 1))) {
-		sch->current[cid] = next;
 		sch->context_shift[cid] = false;
+		swapk_event_clear(&sch->events[cid],
+				  SWAPK_SYSTEM_EVENT_CONTEXT_SWITCH);
 		swapk_call_scheduler_available(sch);
 		_swapk_proc_swap(sch, current, next);
 
@@ -704,6 +721,13 @@ void isr_irq14()
 {
 	SWAPK_CORE_ID_T cid = _swapk_cbptr->core_get_id();
 	swapk_scheduler_t *sch = scheduler_ptr[cid];
+
+	sch->_last[cid] = sch->_current[cid] == &sch->_system_proc
+		? NULL
+		: sch->_current[cid];
+	sch->current[cid] = sch->_next[cid] == &sch->_system_proc
+		? NULL
+		: sch->_next[cid];
 
 	swapk_pendsv_swap(&sch->_current[cid]->stack->stackptr,
 			  &sch->_next[cid]->stack->stackptr);
