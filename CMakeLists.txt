@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
+include(cmake/builddoxygendocs.cmake)
+
 option(SWAPK_EXAMPLES_ENABLE "Enable example libs and applications"
   off)
 option(SWAPK_EXAMPLES_BUILD_APPS "Build example applications"
@@ -35,3 +37,5 @@ target_sources(${PROJECT_NAME} INTERFACE
 
 target_include_directories(${PROJECT_NAME} INTERFACE
   ${CMAKE_CURRENT_LIST_DIR}/include)
+
+builddoxygendocs(SWAPKERNEL)
