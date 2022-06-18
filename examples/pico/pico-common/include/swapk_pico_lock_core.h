@@ -1,6 +1,16 @@
 #ifndef SWAPK_PICO_LOCK_CORE_H
 #define SWAPK_PICO_LOCK_CORE_H
 
+/**
+ * @addtogroup swapk_pico
+ * @{
+ */
+
+/**
+ * @defgroup swapk_pico_lock_core Pico Lock Core Integration
+ * @{
+ */
+
 #define lock_owner_id_t uint16_t
 #define LOCK_INVALID_OWNER_ID ((lock_owner_id_t)-1)
 
@@ -34,5 +44,13 @@
 	do {							\
 		swapk_pico_yield_until(until);			\
 	} while (0);
+
+/**
+ * @}
+ */ /* @addtogroup swapk_pico */
+
+/**
+ * @}
+ */ /* @defgroup swapk_pico_lock_core Pico Lock Core Integration */
 
 #endif /* #ifndef SWAPK_PICO_LOCK_CORE_H */

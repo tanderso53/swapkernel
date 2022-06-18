@@ -215,7 +215,7 @@ void swapk_scheduler_sort(swapk_scheduler_t *sch);
 
 /**
  * @addtogroup swapk_proc
- * @}
+ * @{
  */
 
 void swapk_proc_init(swapk_scheduler_t *sch, swapk_proc_t *proc,
