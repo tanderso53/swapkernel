@@ -118,6 +118,10 @@ void swapk_scheduler_init(swapk_scheduler_t *sch,
 	TAILQ_INIT(&sch->procqueue);
 	sch->proc_cnt = 0;
 	sch->cb_list->sem_sch_set_permits(1);
+#if SWAPK_UNMANAGED_PROCS > 0
+	sch->unmanaged = NULL;
+	TAILQ_INIT(&sch->unmanaged_queue);
+#endif /* #if SWAPK_UNMANAGED_PROCS > 0 */
 
 	for (SWAPK_CORE_ID_T i = 0; i < SWAPK_HARDWARE_THREADS; ++i) {
 		sch->context_shift[i] = true;

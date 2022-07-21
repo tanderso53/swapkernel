@@ -37,6 +37,26 @@
 #define SWAPK_HARDWARE_THREADS 1
 #endif
 
+#ifndef SWAPK_UNMANAGED_PROCS
+/** @brief Set greater than 1 to enable unmanaged processes
+ *
+ * Unmanaged processes are processes that are swapped using another
+ * manager (i.e. not Swapkernel). It can be helpful to inform
+ * swapkernel about these processes so that Swapkernel won't lock out
+ * resources belonging to that system.
+ *
+ * There are no functions that utilize unmanaged processes in the
+ * swapkernel core; Swapkernel only supplies storage for them. If this
+ * feature is used, it will be up to the implementer to initialize and
+ * enqueue each individual process, and to add exceptions for spinlock
+ * and synchronization primatives.
+ *
+ * @note Unmanaged processes are an experimental feature and is not
+ * fully supported by swapkernel. Expect changes.
+ */
+#define SWAPK_UNMANAGED_PROCS 0
+#endif
+
 #ifndef SWAPK_ABSOLUTE_TIME_T
 
 #include <time.h>
@@ -169,6 +189,11 @@ typedef struct {
 	bool context_shift[SWAPK_HARDWARE_THREADS];
 	swapk_proc_t *current[SWAPK_HARDWARE_THREADS];
 	struct swapk_proc_queue procqueue;
+#if SWAPK_UNMANAGED_PROCS > 0
+	struct swapk_proc_queue unmanaged_queue;
+	swapk_proc_t *unmanaged;
+	swapk_proc_t _unmanaged[SWAPK_UNMANAGED_PROCS];
+#endif /* #if SWAPK_UNMANAGED_PROCS > 0 */
 	swapk_callbacks_t *cb_list;
 	swapk_event_t events[SWAPK_HARDWARE_THREADS];
 	uint16_t proc_cnt;

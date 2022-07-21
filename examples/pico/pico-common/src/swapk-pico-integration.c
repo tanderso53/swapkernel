@@ -13,6 +13,8 @@
 #define ARRAY_LEN(array) (sizeof(array)/sizeof(array[0]))
 #endif
 
+extern mutex_t stdio_usb_mutex;
+
 typedef struct swapk_pico_lock_map_node {
 	lock_core_t lock_core;
 	swapk_pid_t pid;
@@ -77,6 +79,19 @@ void swapk_pico_init() {
 	TAILQ_INIT(&_swapk_pico_lock_maps);
 	TAILQ_INIT(&_swapk_pico_lock_maps_free);
 
+	/* Set up USB as an unmanaged process */
+	swapk_proc_t *tusb = &_swapk_pico_scheduler._unmanaged[0];
+	tusb->core_affinity = 0;
+	tusb->core_id = 0;
+	tusb->entry = NULL;
+	tusb->pid = 10001;
+	tusb->priority = 999;
+	tusb->ready = false;
+	tusb->stack = NULL;
+	_swapk_pico_scheduler.unmanaged = tusb;
+	TAILQ_INSERT_HEAD(&_swapk_pico_scheduler.unmanaged_queue, tusb,
+			  _tailq_entry);
+
 	/* Add all lock maps to the free queue so we can find them
 	 * when we need them */
 	for (int i = 0; i < ARRAY_LEN(_swapk_pico_lock_map_data); ++i) {
@@ -120,7 +135,11 @@ void swapk_pico_wait(absolute_time_t time,
 		if (!lock_map)
 			panic("Swapk_pico no lock maps available!!!\n");
 
-		lock_map->pid = _swapk_pico_scheduler.current[cid]->pid;
+		if (lock_core == &stdio_usb_mutex.core)
+			lock_map->pid = _swapk_pico_scheduler.unmanaged->pid;
+		else
+			lock_map->pid = _swapk_pico_scheduler.current[cid]->pid;
+
 		lock_map->lock_core = *lock_core;
 		spin_unlock(lock_core->spin_lock, save);
 	}
@@ -144,6 +163,8 @@ void swapk_pico_notify(lock_core_t *lock_core, uint32_t save)
 {
 	swapk_pico_lock_map_t *lock_map = NULL;
 	swapk_pico_lock_map_t *tlm = NULL;
+	swapk_proc_t *proc = NULL;
+
 	struct _swapk_pico_lock_queue *lq = &_swapk_pico_lock_maps;
 	pid_t pid = 0;
 
@@ -164,6 +185,14 @@ void swapk_pico_notify(lock_core_t *lock_core, uint32_t save)
 	if (!lock_map)
 		return;
 
+	/* If part of unmanaged process, return without swapping */
+	TAILQ_FOREACH(proc, &_swapk_pico_scheduler.unmanaged_queue,
+		      _tailq_entry) {	
+		if (pid == proc->pid)
+			return;
+	}
+
+	/* Switch to the waiting process */
 	if (&_swapk_pico_sch_sem.core != lock_core)
 		swapk_notify_pid(&_swapk_pico_scheduler, pid);
 }
